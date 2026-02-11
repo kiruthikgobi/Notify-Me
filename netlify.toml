@@ -1,6 +1,7 @@
 
 [build]
-  publish = "."
+  command = "npm run build"
+  publish = "dist"
 
 [[redirects]]
   from = "/*"
@@ -14,6 +15,4 @@
     X-Content-Type-Options = "nosniff"
     X-XSS-Protection = "1; mode=block"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "camera=*, microphone=(), geolocation=()"
-    # Relaxed CSP for Razorpay, Google Fonts, and esm.sh dynamic dependencies
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://checkout.razorpay.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://bttlforziagqkrtvetuf.supabase.co https://*.supabase.co; frame-src 'self' https://checkout.razorpay.com; connect-src 'self' https://bttlforziagqkrtvetuf.supabase.co https://*.supabase.co https://generativelanguage.googleapis.com https://esm.sh;"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.supabase.co; frame-src 'self' https://checkout.razorpay.com; connect-src 'self' https://*.supabase.co https://generativelanguage.googleapis.com;"

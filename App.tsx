@@ -12,21 +12,21 @@ import {
   TenantStatus,
   NotificationLog,
   VehicleMake
-} from './types.ts';
-import { ICONS } from './constants.tsx';
-import Dashboard from './components/Dashboard.tsx';
-import VehicleList from './components/VehicleList.tsx';
-import VehicleDetail from './components/VehicleDetail.tsx';
-import AutomationSettings from './components/AutomationSettings.tsx';
-import SuperAdminView from './components/SuperAdminView.tsx';
-import TeamManagement from './components/TeamManagement.tsx';
-import SubscriptionPage from './components/SubscriptionPage.tsx';
-import ActionHistory from './components/ActionHistory.tsx';
-import Toast from './components/Toast.tsx';
-import Auth from './components/Auth.tsx';
-import ConfirmationModal from './components/ConfirmationModal.tsx';
-import PlanLimitModal from './components/PlanLimitModal.tsx';
-import { supabase } from './services/supabaseClient.ts';
+} from './types';
+import { ICONS } from './constants';
+import Dashboard from './components/Dashboard';
+import VehicleList from './components/VehicleList';
+import VehicleDetail from './components/VehicleDetail';
+import AutomationSettings from './components/AutomationSettings';
+import SuperAdminView from './components/SuperAdminView';
+import TeamManagement from './components/TeamManagement';
+import SubscriptionPage from './components/SubscriptionPage';
+import ActionHistory from './components/ActionHistory';
+import Toast from './components/Toast';
+import Auth from './components/Auth';
+import ConfirmationModal from './components/ConfirmationModal';
+import PlanLimitModal from './components/PlanLimitModal';
+import { supabase } from './services/supabaseClient';
 
 declare global {
   interface Window {
@@ -55,15 +55,25 @@ const App: React.FC = () => {
     document.documentElement.classList.contains('dark') || localStorage.getItem('theme') === 'dark'
   );
   
+  // Sidebar state
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => 
+    localStorage.getItem('sidebar_collapsed') === 'true'
+  );
+  
   const [automationConfig, setAutomationConfig] = useState<GlobalAutomationConfig | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
-  const [isPlanLimitModalOpen, setIsPlanLimitModalOpen] = useState(false);
   
   const retryTimeoutRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryCount = useRef(0);
   const lastFetchedUserId = useRef<string | null>(null);
+
+  const toggleSidebar = () => {
+    const newState = !isSidebarCollapsed;
+    setIsSidebarCollapsed(newState);
+    localStorage.setItem('sidebar_collapsed', String(newState));
+  };
 
   const addToast = useCallback((title: string, message: string, type: ToastMessage['type'] = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -292,32 +302,95 @@ const App: React.FC = () => {
     <div className="h-screen w-full flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
       <Toast toasts={toasts} removeToast={removeToast} />
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-64 bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0">
-          <div className="p-8 flex items-center gap-3"><ICONS.Logo className="w-8 h-8 text-primary-500" /><span className="font-display font-black text-2xl text-white tracking-tight">Notify Me</span></div>
-          <nav className="flex-1 px-4 space-y-2 overflow-y-auto">
-            <NavButton active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} icon={ICONS.Grid} label="Dashboard" />
-            <NavButton active={activeView === 'vehicles'} onClick={() => setActiveView('vehicles')} icon={ICONS.Truck} label="Inventory" />
-            <NavButton active={activeView === 'history'} onClick={() => setActiveView('history')} icon={ICONS.List} label="History" />
+        <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-64'} bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 relative`}>
+          
+          {/* Sidebar Toggle Button */}
+          <button 
+            onClick={toggleSidebar}
+            className="absolute -right-3 top-10 w-6 h-6 bg-primary-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-primary-500 transition-colors z-50"
+          >
+            <ICONS.ChevronLeft className={`w-3.5 h-3.5 transition-transform duration-300 ${isSidebarCollapsed ? 'rotate-180' : ''}`} />
+          </button>
+
+          <div className={`p-8 flex items-center gap-3 overflow-hidden ${isSidebarCollapsed ? 'justify-center p-6' : ''}`}>
+            <ICONS.Logo className="w-8 h-8 text-primary-500 shrink-0" />
+            {!isSidebarCollapsed && (
+              <span className="font-display font-black text-2xl text-white tracking-tight animate-in fade-in slide-in-from-left-2">
+                Notify Me
+              </span>
+            )}
+          </div>
+
+          <nav className="flex-1 px-4 space-y-2 overflow-y-auto custom-scrollbar">
+            <NavButton 
+              active={activeView === 'dashboard'} 
+              onClick={() => setActiveView('dashboard')} 
+              icon={ICONS.Grid} 
+              label="Dashboard" 
+              collapsed={isSidebarCollapsed} 
+            />
+            <NavButton 
+              active={activeView === 'vehicles'} 
+              onClick={() => setActiveView('vehicles')} 
+              icon={ICONS.Truck} 
+              label="Inventory" 
+              collapsed={isSidebarCollapsed} 
+            />
+            <NavButton 
+              active={activeView === 'history'} 
+              onClick={() => setActiveView('history')} 
+              icon={ICONS.List} 
+              label="History" 
+              collapsed={isSidebarCollapsed} 
+            />
             {profile?.role === UserRole.TENANT_ADMIN && (
               <>
-                <NavButton active={activeView === 'automation'} onClick={() => setActiveView('automation')} icon={ICONS.Bell} label="Alerts" />
-                <NavButton active={activeView === 'team'} onClick={() => setActiveView('team')} icon={ICONS.Table} label="Team" />
-                <NavButton active={activeView === 'subscription'} onClick={() => setActiveView('subscription')} icon={ICONS.Check} label="Billing" />
+                <NavButton 
+                  active={activeView === 'automation'} 
+                  onClick={() => setActiveView('automation')} 
+                  icon={ICONS.Bell} 
+                  label="Alerts" 
+                  collapsed={isSidebarCollapsed} 
+                />
+                <NavButton 
+                  active={activeView === 'team'} 
+                  onClick={() => setActiveView('team')} 
+                  icon={ICONS.Table} 
+                  label="Team" 
+                  collapsed={isSidebarCollapsed} 
+                />
+                <NavButton 
+                  active={activeView === 'subscription'} 
+                  onClick={() => setActiveView('subscription')} 
+                  icon={ICONS.Check} 
+                  label="Billing" 
+                  collapsed={isSidebarCollapsed} 
+                />
               </>
             )}
           </nav>
-          <div className="p-6 border-t border-white/5 space-y-2">
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-full flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white transition-colors">
-              {isDarkMode ? <ICONS.Sun className="w-4 h-4" /> : <ICONS.Moon className="w-4 h-4" />}
-              <span className="text-[10px] font-black uppercase tracking-widest">Theme</span>
+
+          <div className={`p-6 border-t border-white/5 space-y-2 ${isSidebarCollapsed ? 'p-4' : ''}`}>
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)} 
+              title="Toggle Theme"
+              className={`w-full flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white transition-colors rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}
+            >
+              {isDarkMode ? <ICONS.Sun className="w-4 h-4 shrink-0" /> : <ICONS.Moon className="w-4 h-4 shrink-0" />}
+              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap animate-in fade-in">Theme</span>}
             </button>
-            <button onClick={() => setIsSignOutModalOpen(true)} className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:text-red-300 transition-colors">
-              <ICONS.Plus className="w-4 h-4 rotate-45" />
-              <span className="text-[10px] font-black uppercase tracking-widest">Logout</span>
+            <button 
+              onClick={() => setIsSignOutModalOpen(true)} 
+              title="Logout"
+              className={`w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:text-red-300 transition-colors rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}
+            >
+              <ICONS.Plus className="w-4 h-4 rotate-45 shrink-0" />
+              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap animate-in fade-in">Logout</span>}
             </button>
           </div>
         </aside>
-        <main className="flex-1 overflow-y-auto p-6 lg:p-12">
+
+        <main className="flex-1 overflow-y-auto p-6 lg:p-12 transition-all duration-300">
           <div className="max-w-6xl mx-auto">
             {profile?.role === UserRole.SUPER_ADMIN ? (
               <SuperAdminView tenants={allTenants} logs={logs} onTenantUpdate={() => fetchTenantData(session.user.id, true)} onDeleteTenant={async (id) => { 
@@ -363,10 +436,21 @@ const App: React.FC = () => {
   );
 };
 
-const NavButton = ({ active, onClick, icon: Icon, label }: any) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all ${active ? 'bg-primary-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-    <Icon className="w-5 h-5 shrink-0" />
-    <span className="font-black text-[10px] uppercase tracking-widest">{label}</span>
+const NavButton = ({ active, onClick, icon: Icon, label, collapsed }: any) => (
+  <button 
+    onClick={onClick} 
+    title={collapsed ? label : undefined}
+    className={`w-full flex items-center transition-all duration-300 rounded-2xl relative group ${collapsed ? 'justify-center px-0 py-4' : 'gap-4 px-5 py-4'} ${active ? 'bg-primary-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+  >
+    <Icon className={`w-5 h-5 shrink-0 transition-transform ${active && collapsed ? 'scale-110' : ''}`} />
+    {!collapsed && (
+      <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap animate-in fade-in slide-in-from-left-2 overflow-hidden">
+        {label}
+      </span>
+    )}
+    {collapsed && active && (
+      <div className="absolute left-0 w-1 h-6 bg-white rounded-r-full animate-in fade-in" />
+    )}
   </button>
 );
 
