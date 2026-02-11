@@ -1,0 +1,242 @@
+
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../services/supabaseClient';
+import { ICONS } from '../constants';
+import { UserRole } from '../types';
+
+interface AuthProps {
+  onAuthComplete: () => void;
+}
+
+const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
+  const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.TENANT_ADMIN);
+  const [error, setError] = useState<string | null>(null);
+  const [superAdminExists, setSuperAdminExists] = useState<boolean>(false);
+
+  // Dynamic check for Super Admin existence
+  const checkAdminStatus = async () => {
+    try {
+      const { data, error: rpcError } = await supabase.rpc('check_super_admin_exists');
+      if (!rpcError) {
+        setSuperAdminExists(!!data);
+        // Fallback: If admin exists, don't allow selecting Super Admin role
+        if (data && selectedRole === UserRole.SUPER_ADMIN) {
+          setSelectedRole(UserRole.TENANT_ADMIN);
+        }
+      }
+    } catch (e) {
+      console.error("Super Admin check failed:", e);
+    }
+  };
+
+  useEffect(() => {
+    checkAdminStatus();
+  }, [isSignUp]);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    const sanitizedEmail = email.toLowerCase().trim();
+
+    try {
+      if (isSignUp) {
+        // Validation
+        if (selectedRole === UserRole.TENANT_ADMIN && !companyName.trim()) {
+          throw new Error("Fleet registration requires a company name.");
+        }
+
+        let tenantId: string | null = null;
+
+        // 1. Provision Workspace for Tenant Admins
+        if (selectedRole === UserRole.TENANT_ADMIN) {
+          const { data: tenant, error: tError } = await supabase
+            .from('tenants')
+            .insert({ name: companyName.trim() })
+            .select()
+            .single();
+            
+          if (tError) {
+            if (tError.message.includes('unique constraint')) {
+              throw new Error("This organization name is already registered.");
+            }
+            throw new Error(`Workspace provisioning failed: ${tError.message}`);
+          }
+          tenantId = tenant.id;
+
+          // 2. Setup initial automation config for the new tenant
+          await supabase.from('automation_config').insert({ 
+            tenant_id: tenantId,
+            recipients: [sanitizedEmail]
+          });
+        }
+
+        // 3. User Signup
+        const { data, error: signUpError } = await supabase.auth.signUp({ 
+          email: sanitizedEmail, 
+          password,
+          options: {
+            data: {
+              full_name: sanitizedEmail.split('@')[0],
+              role: selectedRole,
+              tenant_id: tenantId
+            }
+          }
+        });
+        
+        if (signUpError) throw signUpError;
+
+        if (data && !data.session) {
+          setError("Account created! Please verify your email to activate your workspace.");
+          setLoading(false);
+          return;
+        }
+
+      } else {
+        // Login Flow
+        const { error: signInError } = await supabase.auth.signInWithPassword({ 
+          email: sanitizedEmail, 
+          password 
+        });
+        if (signInError) throw new Error("Invalid credentials or unverified account.");
+      }
+
+      onAuthComplete();
+    } catch (err: any) {
+      console.error("Auth Fault:", err);
+      setError(err.message || "An unexpected error occurred during authorization.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-6 font-sans">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-primary-600 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-2xl shadow-primary-500/30 transform hover:rotate-3 transition-transform">
+            <ICONS.Truck className="w-9 h-9" />
+          </div>
+          <h1 className="text-3xl font-display font-black text-slate-900 dark:text-white tracking-tight">FleetGuard<span className="text-primary-600">.</span>SaaS</h1>
+          <p className="text-slate-500 mt-2 font-medium">
+            {isSignUp ? (selectedRole === UserRole.SUPER_ADMIN ? 'Platform Root Setup' : 'Register Fleet Workspace') : 'Authorize Secure Access'}
+          </p>
+        </div>
+
+        <div className="ui-card p-8 md:p-10 rounded-[2.5rem] shadow-elevated border-slate-100 dark:border-slate-800">
+          <form onSubmit={handleAuth} className="space-y-6">
+            
+            {/* Conditional Role Switcher (Sign Up Only) */}
+            {isSignUp && !superAdminExists && (
+              <div className="p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl mb-6 grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole(UserRole.TENANT_ADMIN)}
+                  className={`py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${selectedRole === UserRole.TENANT_ADMIN ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Fleet Admin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole(UserRole.SUPER_ADMIN)}
+                  className={`py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${selectedRole === UserRole.SUPER_ADMIN ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Super Admin
+                </button>
+              </div>
+            )}
+
+            {isSignUp && superAdminExists && (
+               <div className="text-center p-3 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl mb-6 border border-emerald-100 dark:border-emerald-800/50">
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Fleet Registration Active</span>
+               </div>
+            )}
+
+            {isSignUp && selectedRole === UserRole.TENANT_ADMIN && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Company Identity</label>
+                <input 
+                  required
+                  className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all"
+                  placeholder="e.g. Acme Logistics"
+                  value={companyName}
+                  onChange={e => setCompanyName(e.target.value)}
+                />
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Identity (Email)</label>
+                <input 
+                  required
+                  type="email"
+                  className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all"
+                  placeholder="admin@company.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Credential (Password)</label>
+                <input 
+                  required
+                  type="password"
+                  className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {error && (
+              <div className="p-4 text-xs font-bold rounded-2xl border border-red-100 bg-red-50 text-red-600 animate-in shake duration-300">
+                {error}
+              </div>
+            )}
+
+            <button 
+              disabled={loading}
+              className="w-full py-5 bg-primary-600 hover:bg-primary-700 text-white rounded-2xl font-black text-xs tracking-widest shadow-2xl shadow-primary-500/20 active:scale-95 transition-all disabled:opacity-50"
+            >
+              {loading ? 'PROCESSING...' : (isSignUp ? 'REGISTER ACCOUNT' : 'AUTHORIZE SESSION')}
+            </button>
+          </form>
+
+          <div className="mt-8 pt-8 border-t border-slate-100 dark:border-slate-800 text-center">
+            <button 
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setError(null);
+                // Reset role to tenant admin when switching
+                setSelectedRole(UserRole.TENANT_ADMIN);
+              }}
+              className="text-xs font-bold text-slate-400 hover:text-primary-600 transition-colors uppercase tracking-widest"
+            >
+              {isSignUp ? 'Already have an account? Sign In' : 'New fleet manager? Register workspace'}
+            </button>
+          </div>
+        </div>
+
+        {/* Footer info for Super Admin setup */}
+        {isSignUp && !superAdminExists && (
+          <div className="mt-8 p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/50 rounded-2xl text-center">
+             <p className="text-[10px] font-bold text-amber-700 dark:text-amber-500 uppercase tracking-wider">
+               Platform Warning: No Super Admin detected. Initial setup is available.
+             </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Auth;
