@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { ICONS } from '../constants';
@@ -51,7 +50,6 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
 
     try {
       if (isSignUp) {
-        // Password matching validation
         if (password !== confirmPassword) {
           throw new Error("Passwords do not match. Please verify your credentials.");
         }
@@ -110,20 +108,14 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
         });
         
         if (signInError) {
-          if (signInError.message.toLowerCase().includes("invalid login credentials")) {
-            throw new Error("Incorrect email or password. Please verify your credentials or sign up for a new account.");
-          } else if (signInError.message.toLowerCase().includes("email not confirmed")) {
-            throw new Error("Your email address has not been confirmed. Please check your inbox for the activation link.");
-          } else {
-            throw signInError;
-          }
+          throw new Error("Incorrect email or password. Please verify your credentials.");
         }
       }
 
       onAuthComplete();
     } catch (err: any) {
       console.error("Auth Fault:", err);
-      setError(err.message || "An unexpected error occurred during authorization.");
+      setError(err.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
@@ -139,7 +131,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
           <h1 className="text-3xl font-display font-black text-slate-900 dark:text-white tracking-tight">Notify Me</h1>
         </div>
 
-        <div className="ui-card p-8 md:p-10 rounded-[2.5rem] shadow-elevated border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-500">
+        <div className="ui-card p-8 md:p-10 rounded-[2.5rem] shadow-elevated border-slate-100 dark:border-slate-800">
           <form onSubmit={handleAuth} className="space-y-6">
             
             {isSignUp && !superAdminExists && (
@@ -161,12 +153,6 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
               </div>
             )}
 
-            {isSignUp && superAdminExists && (
-               <div className="text-center p-3 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl mb-6 border border-emerald-100 dark:border-emerald-800/50">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Fleet Registration Active</span>
-               </div>
-            )}
-
             {isSignUp && selectedRole === UserRole.TENANT_ADMIN && (
               <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
@@ -182,7 +168,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
             
             <div className="space-y-4">
               <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Identity (Email)</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
                 <input 
                   required
                   type="email"
@@ -194,9 +180,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
               </div>
 
               <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">
-                  {isSignUp ? 'New Password' : 'Credential (Password)'}
-                </label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
                 <input 
                   required
                   type="password"
@@ -223,7 +207,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
             </div>
 
             {error && (
-              <div className="p-4 text-xs font-bold rounded-2xl border border-red-100 bg-red-50 text-red-600 animate-in shake duration-300">
+              <div className="p-4 text-xs font-bold rounded-2xl border border-red-100 bg-red-50 text-red-600">
                 {error}
               </div>
             )}
@@ -232,7 +216,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
               disabled={loading}
               className="w-full py-5 bg-primary-600 hover:bg-primary-700 text-white rounded-2xl font-black text-xs tracking-widest shadow-2xl shadow-primary-500/20 active:scale-95 transition-all disabled:opacity-50"
             >
-              {loading ? 'PROCESSING...' : (isSignUp ? 'REGISTER ACCOUNT' : 'SIGN IN')}
+              {loading ? 'PROCESSING...' : (isSignUp ? 'REGISTER' : 'SIGN IN')}
             </button>
           </form>
 
@@ -241,7 +225,6 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
               onClick={() => {
                 setIsSignUp(!isSignUp);
                 setError(null);
-                setConfirmPassword('');
                 setSelectedRole(UserRole.TENANT_ADMIN);
               }}
               className="text-xs font-bold text-slate-400 hover:text-primary-600 transition-colors uppercase tracking-widest"

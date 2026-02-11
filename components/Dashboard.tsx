@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { Vehicle, ComplianceRecord, UserRole, Tenant, SubscriptionPlan } from '../types';
@@ -87,14 +86,23 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
   const isAtLimit = tenant?.plan === SubscriptionPlan.FREE && vehicles.length >= 5;
   const isOwner = userRole === UserRole.TENANT_ADMIN;
 
+  const getRoleLabel = (role?: UserRole) => {
+    if (!role) return 'Fleet Viewer';
+    const roleStr = String(role);
+    if (roleStr === UserRole.SUPER_ADMIN) return 'Super Admin';
+    if (roleStr === UserRole.TENANT_ADMIN) return 'Fleet Owner';
+    if (roleStr === UserRole.TENANT_MANAGER) return 'Fleet Manager';
+    return 'Fleet Viewer';
+  };
+
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white">Fleet Overview</h1>
-            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border ${userRole === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
-              {userRole === UserRole.SUPER_ADMIN ? 'Super Admin' : userRole === UserRole.TENANT_ADMIN ? 'Fleet Owner' : userRole === UserRole.TENANT_MANAGER ? 'Fleet Manager' : 'Fleet Viewer'}
+            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border ${String(userRole) === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
+              {getRoleLabel(userRole)}
             </span>
             {tenant?.plan === SubscriptionPlan.PRO && (
                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border bg-primary-600 text-white border-primary-700 animate-pulse">
@@ -124,7 +132,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
       </header>
 
       {/* Subscription Card - Only for Admin */}
-      {isOwner && userRole !== UserRole.SUPER_ADMIN && (
+      {isOwner && String(userRole) !== UserRole.SUPER_ADMIN && (
         <div className={`ui-card p-6 rounded-3xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6 border-l-8 transition-colors ${tenant?.plan === SubscriptionPlan.PRO ? 'border-l-emerald-500' : isAtLimit ? 'border-l-red-500 bg-red-50/20' : 'border-l-amber-500 bg-amber-50/20'}`}>
             <div className="flex items-center gap-6">
                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tenant?.plan === SubscriptionPlan.PRO ? 'bg-emerald-100 text-emerald-600' : isAtLimit ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
