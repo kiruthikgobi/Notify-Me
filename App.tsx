@@ -44,6 +44,7 @@ const App: React.FC = () => {
   const [vehicleMakes, setVehicleMakes] = useState<VehicleMake[]>([]);
   
   const [activeView, setActiveView] = useState<View>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [records, setRecords] = useState<ComplianceRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +73,7 @@ const App: React.FC = () => {
   const addToast = useCallback((title: string, message: string, type: ToastMessage['type'] = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts(prev => [...prev, { id, title, message, type }]);
-  }, [setToasts]);
+  }, []);
 
   const removeToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
@@ -85,6 +86,7 @@ const App: React.FC = () => {
     setSyncingIdentity(false);
     lastFetchedUserId.current = null;
     setIsSignOutModalOpen(false);
+    setIsMobileMenuOpen(false);
   };
 
   const fetchTenantData = useCallback(async (userId: string, force: boolean = false) => {
@@ -143,43 +145,20 @@ const App: React.FC = () => {
 
         if (vRes.status === 'fulfilled' && vRes.value.data) {
           setVehicles(vRes.value.data.map(v => ({
-            id: v.id, 
-            tenantId: v.tenant_id, 
-            registrationNumber: v.registration_number, 
-            make: v.make, 
-            model: v.model, 
-            year: v.year, 
-            type: v.type as any, 
-            addedDate: v.added_date, 
-            isDraft: v.is_draft
+            id: v.id, tenantId: v.tenant_id, registrationNumber: v.registration_number, make: v.make, model: v.model, year: v.year, type: v.type as any, addedDate: v.added_date, isDraft: v.is_draft
           })));
         }
 
         if (rRes.status === 'fulfilled' && rRes.value.data) {
           setRecords(rRes.value.data.map(r => ({
-            id: r.id, 
-            tenantId: r.tenant_id, 
-            vehicleId: r.vehicle_id, 
-            type: r.type as ComplianceType, 
-            expiryDate: r.expiry_date || '', 
-            lastRenewedDate: r.last_renewed_date || '', 
-            isDraft: r.is_draft, 
-            sentReminders: r.sent_reminders || [], 
-            documentName: r.document_name, 
-            documentUrl: r.document_url, 
-            alertEnabled: r.alert_enabled !== false, 
-            alertDaysBefore: r.alert_days_before || 15
+            id: r.id, tenantId: r.tenant_id, vehicleId: r.vehicle_id, type: r.type as ComplianceType, expiryDate: r.expiry_date || '', lastRenewedDate: r.last_renewed_date || '', isDraft: r.is_draft, sentReminders: r.sent_reminders || [], documentName: r.document_name, documentUrl: r.document_url, alertEnabled: r.alert_enabled !== false, alertDaysBefore: r.alert_days_before || 15
           })));
         }
 
         if (nRes.status === 'fulfilled' && nRes.value.data) {
           const n = nRes.value.data;
           setAutomationConfig({ 
-            tenantId: n.tenant_id, 
-            recipients: Array.isArray(n.recipients) ? n.recipients : [], 
-            defaultThresholds: Array.isArray(n.default_thresholds) ? n.default_thresholds : [30, 15, 7, 3, 1], 
-            enabled: n.enabled !== false, 
-            emailTemplate: n.email_template 
+            tenantId: n.tenant_id, recipients: Array.isArray(n.recipients) ? n.recipients : [], defaultThresholds: Array.isArray(n.default_thresholds) ? n.default_thresholds : [30, 15, 7, 3, 1], enabled: n.enabled !== false, emailTemplate: n.email_template 
           });
         }
 
@@ -206,13 +185,8 @@ const App: React.FC = () => {
         
         if (stRes.status === 'fulfilled' && stRes.value.data) {
           setAllTenants(stRes.value.data.map(t => ({
-            id: t.id, 
-            name: t.name, 
-            ownerEmail: ((t.profiles as any[]) || []).find(p => p.role === UserRole.TENANT_ADMIN)?.full_name || 'System',
-            plan: t.plan as SubscriptionPlan, 
-            status: t.status as TenantStatus, 
-            createdAt: t.created_at, 
-            subscriptionExpiry: t.subscription_expiry
+            id: t.id, name: t.name, ownerEmail: ((t.profiles as any[]) || []).find(p => p.role === UserRole.TENANT_ADMIN)?.full_name || 'System',
+            plan: t.plan as SubscriptionPlan, status: t.status as TenantStatus, createdAt: t.created_at, subscriptionExpiry: t.subscription_expiry
           })));
         }
         
@@ -269,6 +243,11 @@ const App: React.FC = () => {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
+  useEffect(() => {
+    if (isMobileMenuOpen) document.body.classList.add('menu-open');
+    else document.body.classList.remove('menu-open');
+  }, [isMobileMenuOpen]);
+
   const onAddVehicle = async (v: Vehicle) => {
     const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
     if (!activeTenantId) return;
@@ -293,8 +272,13 @@ const App: React.FC = () => {
         fetchTenantData(session.user.id, true); 
       }
     } catch (err: any) {
-      addToast('System Error', 'Could not access the vehicle registry.', 'error');
+      addToast('System Error', 'Could not access registry.', 'error');
     }
+  };
+
+  const navigateTo = (view: View) => {
+    setActiveView(view);
+    setIsMobileMenuOpen(false);
   };
 
   if (!session && !loading) return <Auth onAuthComplete={() => {}} />;
@@ -303,16 +287,47 @@ const App: React.FC = () => {
     <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-slate-950 p-6 text-center">
       <div className="spinner mb-6" />
       <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2">Notify Me</h2>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Syncing Secure Registry</p>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Establishing Secure Workspace</p>
     </div>
   );
 
+  const NavItems = () => (
+    <>
+      <NavButton active={activeView === 'dashboard'} onClick={() => navigateTo('dashboard')} icon={ICONS.Grid} label="Dashboard" collapsed={isSidebarCollapsed} />
+      <NavButton active={activeView === 'vehicles'} onClick={() => navigateTo('vehicles')} icon={ICONS.Truck} label="Inventory" collapsed={isSidebarCollapsed} />
+      <NavButton active={activeView === 'history'} onClick={() => navigateTo('history')} icon={ICONS.List} label="History" collapsed={isSidebarCollapsed} />
+      {(profile?.role === UserRole.TENANT_ADMIN || profile?.role === UserRole.TENANT_MANAGER) && (
+        <NavButton active={activeView === 'automation'} onClick={() => navigateTo('automation')} icon={ICONS.Bell} label="Alerts" collapsed={isSidebarCollapsed} />
+      )}
+      {profile?.role === UserRole.TENANT_ADMIN && (
+        <>
+          <NavButton active={activeView === 'team'} onClick={() => navigateTo('team')} icon={ICONS.Table} label="Team" collapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'subscription'} onClick={() => navigateTo('subscription')} icon={ICONS.Check} label="Billing" collapsed={isSidebarCollapsed} />
+        </>
+      )}
+    </>
+  );
+
   return (
-    <div className="h-screen w-full flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
+    <div className="h-screen w-full flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans overflow-hidden">
       <Toast toasts={toasts} removeToast={removeToast} />
+      
+      {/* Mobile Top Header - Ergonomic Trigger on the Left */}
+      <div className="lg:hidden flex items-center justify-between px-6 py-4 bg-navy-900 dark:bg-black text-white shrink-0 safe-pt border-b border-white/5 z-50 shadow-lg">
+        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10 transition-colors focus:ring-2 focus:ring-primary-500">
+          {isMobileMenuOpen ? <ICONS.Plus className="w-6 h-6 rotate-45" /> : <ICONS.Menu className="w-6 h-6" />}
+        </button>
+        <div className="flex items-center gap-3">
+          <ICONS.Logo className="w-7 h-7" />
+          <span className="font-display font-black text-lg tracking-tight">Notify Me</span>
+        </div>
+        <div className="w-10"></div> {/* Spacer for symmetry */}
+      </div>
+
       <div className="flex-1 flex overflow-hidden">
-        <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-64'} bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 relative`}>
-          <button onClick={toggleSidebar} className="absolute -right-3 top-10 w-6 h-6 bg-primary-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-primary-500 transition-colors z-50">
+        {/* Desktop Sidebar - Premium Left Navigation */}
+        <aside className={`hidden lg:flex ${isSidebarCollapsed ? 'w-20' : 'w-64'} bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 relative`}>
+          <button onClick={toggleSidebar} className="absolute -right-3 top-10 w-6 h-6 bg-primary-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-primary-500 transition-colors z-[60]">
             <ICONS.ChevronLeft className={`w-3.5 h-3.5 transition-transform duration-300 ${isSidebarCollapsed ? 'rotate-180' : ''}`} />
           </button>
           <div className={`p-8 flex items-center gap-3 overflow-hidden ${isSidebarCollapsed ? 'justify-center p-6' : ''}`}>
@@ -320,33 +335,56 @@ const App: React.FC = () => {
             {!isSidebarCollapsed && <span className="font-display font-black text-2xl text-white tracking-tight">Notify Me</span>}
           </div>
           <nav className="flex-1 px-4 space-y-2 overflow-y-auto custom-scrollbar">
-            <NavButton active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} icon={ICONS.Grid} label="Dashboard" collapsed={isSidebarCollapsed} />
-            <NavButton active={activeView === 'vehicles'} onClick={() => setActiveView('vehicles')} icon={ICONS.Truck} label="Inventory" collapsed={isSidebarCollapsed} />
-            <NavButton active={activeView === 'history'} onClick={() => setActiveView('history')} icon={ICONS.List} label="History" collapsed={isSidebarCollapsed} />
-            {(profile?.role === UserRole.TENANT_ADMIN || profile?.role === UserRole.TENANT_MANAGER) && (
-              <NavButton active={activeView === 'automation'} onClick={() => setActiveView('automation')} icon={ICONS.Bell} label="Alerts" collapsed={isSidebarCollapsed} />
-            )}
-            {profile?.role === UserRole.TENANT_ADMIN && (
-              <>
-                <NavButton active={activeView === 'team'} onClick={() => setActiveView('team')} icon={ICONS.Table} label="Team" collapsed={isSidebarCollapsed} />
-                <NavButton active={activeView === 'subscription'} onClick={() => setActiveView('subscription')} icon={ICONS.Check} label="Billing" collapsed={isSidebarCollapsed} />
-              </>
-            )}
+            <NavItems />
           </nav>
           <div className={`p-6 border-t border-white/5 space-y-2 ${isSidebarCollapsed ? 'p-4' : ''}`}>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white transition-colors rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center gap-3 px-4 py-3.5 text-slate-400 hover:text-white hover:bg-white/5 transition-all rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
               {isDarkMode ? <ICONS.Sun className="w-4 h-4 shrink-0" /> : <ICONS.Moon className="w-4 h-4 shrink-0" />}
               {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Theme</span>}
             </button>
-            <button onClick={() => setIsSignOutModalOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:text-red-300 transition-colors rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
+            <button onClick={() => setIsSignOutModalOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
               <ICONS.Plus className="w-4 h-4 rotate-45 shrink-0" />
               {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Logout</span>}
             </button>
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-6 lg:p-12 transition-all duration-300">
-          <div className="max-w-6xl mx-auto">
+        {/* Mobile Sidebar Overlay - Slides in from LEFT to match desktop side */}
+        {isMobileMenuOpen && (
+          <div className="lg:hidden fixed inset-0 z-[100]">
+            <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setIsMobileMenuOpen(false)} />
+            <div className="absolute top-0 left-0 bottom-0 w-[85%] max-w-sm bg-navy-900 dark:bg-black text-white p-6 shadow-2xl animate-in slide-in-from-left duration-300 flex flex-col">
+              <div className="flex items-center justify-between mb-10 px-2">
+                <div className="flex items-center gap-3">
+                  <ICONS.Logo className="w-8 h-8" />
+                  <span className="font-display font-black text-2xl tracking-tight">Notify Me</span>
+                </div>
+                <button onClick={() => setIsMobileMenuOpen(false)} className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10">
+                  <ICONS.Plus className="w-5 h-5 rotate-45" />
+                </button>
+              </div>
+              <nav className="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+                <NavItems />
+              </nav>
+              <div className="mt-auto pt-6 border-t border-white/10 space-y-4">
+                 <button onClick={() => { setIsDarkMode(!isDarkMode); setIsMobileMenuOpen(false); }} className="w-full flex items-center justify-between px-5 py-5 text-slate-400 hover:text-white bg-white/5 rounded-2xl transition-all">
+                  <div className="flex items-center gap-4">
+                    {isDarkMode ? <ICONS.Sun className="w-5 h-5 shrink-0" /> : <ICONS.Moon className="w-5 h-5 shrink-0" />}
+                    <span className="font-bold text-sm tracking-wide">Change Theme</span>
+                  </div>
+                </button>
+                <button onClick={() => { setIsSignOutModalOpen(true); setIsMobileMenuOpen(false); }} className="w-full flex items-center gap-4 px-5 py-5 text-red-400 hover:text-red-300 bg-red-500/10 rounded-2xl transition-all font-black text-xs tracking-widest uppercase">
+                  <ICONS.Plus className="w-5 h-5 rotate-45 shrink-0" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12 transition-all duration-300 custom-scrollbar safe-pb">
+          <div className="max-w-6xl mx-auto pb-12">
             {profile?.role === UserRole.SUPER_ADMIN ? (
               <SuperAdminView tenants={allTenants} logs={logs} onTenantUpdate={() => fetchTenantData(session.user.id, true)} onDeleteTenant={async (id) => { 
                 await supabase.from('tenants').delete().eq('id', id); fetchTenantData(session.user.id, true); 
@@ -417,15 +455,18 @@ const App: React.FC = () => {
           </div>
         </main>
       </div>
-      <ConfirmationModal isOpen={isSignOutModalOpen} onClose={() => setIsSignOutModalOpen(false)} onConfirm={handleSignOut} title="Sign Out?" message="Are you sure you want to exit?" confirmText="Logout" />
+      <ConfirmationModal isOpen={isSignOutModalOpen} onClose={() => setIsSignOutModalOpen(false)} onConfirm={handleSignOut} title="Sign Out?" message="Are you sure you want to exit your workspace?" confirmText="Logout" />
     </div>
   );
 };
 
 const NavButton = ({ active, onClick, icon: Icon, label, collapsed }: any) => (
-  <button onClick={onClick} className={`w-full flex items-center transition-all duration-300 rounded-2xl relative ${collapsed ? 'justify-center px-0 py-4' : 'gap-4 px-5 py-4'} ${active ? 'bg-primary-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-    <Icon className={`w-5 h-5 shrink-0`} />
-    {!collapsed && <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap overflow-hidden">{label}</span>}
+  <button onClick={onClick} className={`w-full flex items-center transition-all duration-300 rounded-2xl relative lg:p-4 p-5 overflow-hidden group ${collapsed ? 'lg:justify-center' : 'lg:gap-4 gap-5'} ${active ? 'bg-primary-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+    {/* Active Indicator Bar */}
+    {active && <div className="absolute left-0 top-3 bottom-3 w-1 bg-white rounded-r-full" />}
+    
+    <Icon className={`w-5 h-5 shrink-0 transition-transform ${active ? 'scale-110' : 'group-hover:scale-110'}`} />
+    <span className={`font-black text-[10px] uppercase tracking-widest whitespace-nowrap transition-all duration-300 ${collapsed ? 'lg:w-0 lg:opacity-0' : 'w-auto opacity-100'}`}>{label}</span>
   </button>
 );
 
