@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Vehicle, ComplianceRecord, UserRole, SubscriptionPlan, VehicleMake } from '../types';
 import { ICONS } from '../constants';
@@ -41,7 +40,6 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
     type: 'Truck'
   });
 
-  // Updated Read-Only logic: Admins and Managers have full access. Viewers are restricted.
   const isReadOnly = userRole === UserRole.TENANT_VIEWER;
   const isAtLimit = tenantPlan === SubscriptionPlan.FREE && vehicles.length >= 5;
 
@@ -50,8 +48,8 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
   }, [viewMode]);
 
   const filteredVehicles = vehicles.filter(v => {
-    const searchMatch = v.registrationNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                       v.make.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchMatch = (v.registrationNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                       (v.make || '').toLowerCase().includes(searchTerm.toLowerCase());
     if (!searchMatch) return false;
     
     if (initialFilter === 'drafts') return v.isDraft;
@@ -88,12 +86,14 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
   const handleAdd = (draft: boolean = false) => {
     if (isReadOnly) return;
     
-    if (!newVehicle.registrationNumber) return;
+    if (!newVehicle.registrationNumber?.trim()) {
+      alert("Registration Number is required.");
+      return;
+    }
     
     onAdd({ 
       ...newVehicle as Vehicle, 
-      registrationNumber: (newVehicle.registrationNumber || '').toUpperCase(),
-      id: Date.now().toString(), 
+      registrationNumber: (newVehicle.registrationNumber || '').toUpperCase().trim(),
       isDraft: draft,
       addedDate: new Date().toISOString().split('T')[0]
     }); 
@@ -382,19 +382,18 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturer</label>
-                  <select 
+                  <input 
+                    list="makes-list"
                     className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-semibold transition-all"
+                    placeholder="Search or type..."
                     value={newVehicle.make}
                     onChange={e => setNewVehicle({ ...newVehicle, make: e.target.value })}
-                  >
-                    <option value="">Select Manufacturer</option>
+                  />
+                  <datalist id="makes-list">
                     {vehicleMakes.map(make => (
-                      <option key={make.id} value={make.name}>{make.name}</option>
+                      <option key={make.id} value={make.name} />
                     ))}
-                    {vehicleMakes.length === 0 && (
-                      <option disabled>No manufacturers defined. Add some in settings.</option>
-                    )}
-                  </select>
+                  </datalist>
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Model Year</label>
@@ -425,7 +424,7 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
               </div>
 
               <div className="mt-2 text-[10px] text-slate-400 font-medium">
-                * To add more manufacturers, visit the "Alert & Data Settings" tab.
+                * You can type any manufacturer name if it's not in the list.
               </div>
             </div>
 

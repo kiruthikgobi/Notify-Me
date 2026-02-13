@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Tenant, SubscriptionPlan } from '../types';
 import { ICONS } from '../constants';
@@ -10,8 +9,21 @@ interface SubscriptionPageProps {
 }
 
 const SubscriptionPage: React.FC<SubscriptionPageProps> = ({ tenant, vehicleCount, onUpgrade }) => {
+  if (!tenant) return <div className="p-20 text-center text-slate-400 animate-pulse">Initializing billing system...</div>;
+
   const isPro = tenant.plan === SubscriptionPlan.PRO;
   const isAtLimit = !isPro && vehicleCount >= 5;
+
+  const formatExpiryDate = (dateStr?: string) => {
+    if (!dateStr) return 'N/A';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'N/A';
+      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+    } catch {
+      return 'N/A';
+    }
+  };
 
   return (
     <div className="space-y-10 animate-in fade-in duration-500 max-w-4xl mx-auto py-10 pb-20">
@@ -25,7 +37,6 @@ const SubscriptionPage: React.FC<SubscriptionPageProps> = ({ tenant, vehicleCoun
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Current Plan Status */}
         <div className="ui-card p-8 rounded-[2.5rem] border-l-8 border-primary-600 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-8">
@@ -40,7 +51,7 @@ const SubscriptionPage: React.FC<SubscriptionPageProps> = ({ tenant, vehicleCoun
               </h3>
               <p className="text-slate-500 font-medium">
                 {isPro 
-                  ? 'Your organization has full access to unlimited vehicle registration and all expiry alerts.' 
+                  ? `Your organization has full access. Expiry: ${formatExpiryDate(tenant.subscriptionExpiry)}` 
                   : 'You are currently limited to 5 vehicles and basic compliance monitoring.'}
               </p>
             </div>
@@ -56,14 +67,13 @@ const SubscriptionPage: React.FC<SubscriptionPageProps> = ({ tenant, vehicleCoun
                 </div>
                 {!isPro && (
                    <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded ${isAtLimit ? 'bg-red-50 text-red-500 animate-pulse' : 'bg-primary-50 text-primary-600'}`}>
-                      {isAtLimit ? 'LIMIT REACHED' : `${5 - vehicleCount} Slots Left`}
+                      {isAtLimit ? 'LIMIT REACHED' : `${Math.max(0, 5 - vehicleCount)} Slots Left`}
                    </span>
                 )}
              </div>
           </div>
         </div>
 
-        {/* Upgrade Card */}
         <div className={`ui-card p-8 rounded-[2.5rem] relative overflow-hidden flex flex-col transition-all ${isPro ? 'opacity-50 grayscale' : 'shadow-2xl shadow-primary-500/10 border-primary-100'}`}>
           {!isPro && <div className="absolute top-0 right-0 bg-primary-600 text-white text-[10px] font-black px-6 py-2 rounded-bl-2xl tracking-widest">PRO BENEFITS</div>}
           

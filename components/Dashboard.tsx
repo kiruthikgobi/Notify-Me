@@ -14,9 +14,8 @@ interface DashboardProps {
   onUpgrade?: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle, onNavigateFleet, userRole, tenant, onUpgrade }) => {
-  const publishedVehicles = useMemo(() => vehicles.filter(v => !v.isDraft), [vehicles]);
-  const draftVehicles = useMemo(() => vehicles.filter(v => v.isDraft), [vehicles]);
+const Dashboard: React.FC<DashboardProps> = ({ vehicles = [], records = [], onViewVehicle, onNavigateFleet, userRole, tenant, onUpgrade }) => {
+  const publishedVehicles = useMemo(() => vehicles.filter(v => v && !v.isDraft), [vehicles]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -88,10 +87,9 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
 
   const getRoleLabel = (role?: UserRole) => {
     if (!role) return 'Fleet Viewer';
-    const roleStr = String(role);
-    if (roleStr === UserRole.SUPER_ADMIN) return 'Super Admin';
-    if (roleStr === UserRole.TENANT_ADMIN) return 'Fleet Owner';
-    if (roleStr === UserRole.TENANT_MANAGER) return 'Fleet Manager';
+    if (role === UserRole.SUPER_ADMIN) return 'Super Admin';
+    if (role === UserRole.TENANT_ADMIN) return 'Fleet Owner';
+    if (role === UserRole.TENANT_MANAGER) return 'Fleet Manager';
     return 'Fleet Viewer';
   };
 
@@ -101,7 +99,7 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
         <div>
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white">Fleet Overview</h1>
-            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border ${String(userRole) === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
+            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border ${userRole === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
               {getRoleLabel(userRole)}
             </span>
             {tenant?.plan === SubscriptionPlan.PRO && (
@@ -132,7 +130,8 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
       </header>
 
       {/* Subscription Card - Only for Admin */}
-      {isOwner && String(userRole) !== UserRole.SUPER_ADMIN && (
+      {/* Fix: Removed redundant check for SUPER_ADMIN. isOwner is true only for TENANT_ADMIN, which doesn't overlap with SUPER_ADMIN. */}
+      {isOwner && (
         <div className={`ui-card p-6 rounded-3xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6 border-l-8 transition-colors ${tenant?.plan === SubscriptionPlan.PRO ? 'border-l-emerald-500' : isAtLimit ? 'border-l-red-500 bg-red-50/20' : 'border-l-amber-500 bg-amber-50/20'}`}>
             <div className="flex items-center gap-6">
                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tenant?.plan === SubscriptionPlan.PRO ? 'bg-emerald-100 text-emerald-600' : isAtLimit ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
@@ -159,11 +158,11 @@ const Dashboard: React.FC<DashboardProps> = ({ vehicles, records, onViewVehicle,
                   {isAtLimit ? 'Upgrade to Pro – ₹99/year' : 'Get Unlimited Access • ₹99'}
                </button>
             )}
-            {tenant?.plan === SubscriptionPlan.PRO && (
+            {tenant?.plan === SubscriptionPlan.PRO && tenant?.subscriptionExpiry && (
                <div className="flex flex-col items-end">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Valid Until</span>
                   <span className="text-lg font-display font-bold text-slate-900 dark:text-white">
-                     {new Date(tenant.subscriptionExpiry!).toLocaleDateString()}
+                     {new Date(tenant.subscriptionExpiry).toLocaleDateString()}
                   </span>
                </div>
             )}
