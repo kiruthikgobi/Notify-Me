@@ -1,5 +1,5 @@
 -- ========================================================
--- FLEETGUARD SaaS: COMPREHENSIVE DATABASE CORE (V2.1)
+-- FLEETGUARD SaaS: MASTER DATABASE SCHEMA
 -- ========================================================
 
 -- 1. Tenants Table
@@ -108,32 +108,36 @@ END $$;
 -- RLS HELPER: RECURSION-PROOF JWT LOOKUP
 -- ========================================================
 -- Extracts tenant_id from user_metadata in the JWT. 
--- This is much faster and prevents recursion loops.
+-- Bypasses recursion by not querying any tables.
 CREATE OR REPLACE FUNCTION public.get_auth_tenant_id()
 RETURNS UUID AS $$
-  SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb -> 'user_metadata' ->> 'tenant_id')::uuid;
-$$ LANGUAGE sql STABLE;
+BEGIN
+  RETURN (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb -> 'user_metadata' ->> 'tenant_id')::uuid;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
 -- ========================================================
 -- GLOBAL POLICIES
 -- ========================================================
 
--- Profiles
+-- Profiles: Allow self access and tenant-wide visibility for managers
 CREATE POLICY "Profiles_Self_Access" ON profiles FOR ALL USING (id = auth.uid());
-CREATE POLICY "Profiles_Tenant_Access" ON profiles FOR SELECT USING (tenant_id = get_auth_tenant_id());
+CREATE POLICY "Profiles_Tenant_Visibility" ON profiles FOR SELECT USING (tenant_id = get_auth_tenant_id());
 
--- Tenants
-CREATE POLICY "Tenants_Tenant_Access" ON tenants FOR SELECT USING (id = get_auth_tenant_id());
+-- Tenants: View own tenant info
+CREATE POLICY "Tenants_View_Own" ON tenants FOR SELECT USING (id = get_auth_tenant_id());
 
--- Data Tables
-CREATE POLICY "Vehicles_Tenant_Isolation" ON vehicles FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Compliance_Tenant_Isolation" ON compliance_records FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Automation_Tenant_Isolation" ON automation_config FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Makes_Tenant_Isolation" ON vehicle_makes FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Logs_Tenant_Isolation" ON notification_logs FOR ALL USING (tenant_id = get_auth_tenant_id());
+-- Data Tables: strict tenant isolation
+CREATE POLICY "Vehicles_Isolation" ON vehicles FOR ALL USING (tenant_id = get_auth_tenant_id());
+CREATE POLICY "Compliance_Isolation" ON compliance_records FOR ALL USING (tenant_id = get_auth_tenant_id());
+CREATE POLICY "Automation_Isolation" ON automation_config FOR ALL USING (tenant_id = get_auth_tenant_id());
+CREATE POLICY "Makes_Isolation" ON vehicle_makes FOR ALL USING (tenant_id = get_auth_tenant_id());
+CREATE POLICY "Logs_Isolation" ON notification_logs FOR ALL USING (tenant_id = get_auth_tenant_id());
 
 -- ========================================================
--- PROVISIONING TRIGGER
+-- AUTOMATED PROVISIONING
 -- ========================================================
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -145,6 +149,7 @@ BEGIN
   v_tenant_id := (new.raw_user_metadata->>'tenant_id')::uuid;
   v_role := COALESCE(new.raw_user_metadata->>'role', 'TENANT_ADMIN');
 
+  -- Create Profile
   INSERT INTO public.profiles (id, full_name, role, tenant_id)
   VALUES (
     new.id,
@@ -158,6 +163,7 @@ BEGIN
     role = EXCLUDED.role,
     tenant_id = COALESCE(profiles.tenant_id, EXCLUDED.tenant_id);
 
+  -- Create Automation Config for new Fleet Admins
   IF (v_role = 'TENANT_ADMIN' AND v_tenant_id IS NOT NULL) THEN
     INSERT INTO public.automation_config (tenant_id, recipients)
     VALUES (v_tenant_id, ARRAY[new.email])
@@ -173,7 +179,10 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- Limit Trigger
+-- ========================================================
+-- SUBSCRIPTION LIMITS
+-- ========================================================
+
 CREATE OR REPLACE FUNCTION public.enforce_vehicle_limit()
 RETURNS trigger AS $$
 DECLARE
@@ -183,11 +192,15 @@ BEGIN
   SELECT plan INTO v_plan FROM public.tenants WHERE id = NEW.tenant_id;
   IF v_plan = 'FREE' THEN
     SELECT COUNT(*) INTO v_count FROM public.vehicles WHERE tenant_id = NEW.tenant_id;
-    IF v_count >= 5 THEN RAISE EXCEPTION 'Vehicle limit reached for FREE plan.'; END IF;
+    IF v_count >= 5 THEN 
+      RAISE EXCEPTION 'Vehicle limit (5) reached for FREE plan. Please upgrade to Pro.'; 
+    END IF;
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_enforce_vehicle_limit ON vehicles;
-CREATE TRIGGER tr_enforce_vehicle_limit BEFORE INSERT ON vehicles FOR EACH ROW EXECUTE PROCEDURE public.enforce_vehicle_limit();
+CREATE TRIGGER tr_enforce_vehicle_limit 
+  BEFORE INSERT ON vehicles 
+  FOR EACH ROW EXECUTE PROCEDURE public.enforce_vehicle_limit();

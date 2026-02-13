@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Vehicle, 
@@ -73,7 +72,7 @@ const App: React.FC = () => {
   const addToast = useCallback((title: string, message: string, type: ToastMessage['type'] = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts(prev => [...prev, { id, title, message, type }]);
-  }, []);
+  }, [setToasts]);
 
   const removeToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
@@ -95,19 +94,16 @@ const App: React.FC = () => {
     lastFetchedUserId.current = userId;
     
     try {
-      // Step 0: Identify Tenant ID from Session (most reliable path)
       const { data: { user } } = await supabase.auth.getUser();
       const metaTenantId = user?.user_metadata?.tenant_id;
       const metaRole = user?.user_metadata?.role || UserRole.TENANT_ADMIN;
 
-      // 1. Fetch Profile Record
       let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
       
-      // Auto-repair profile state if missing from table but present in metadata
       if (!profileData && metaTenantId) {
         profileData = {
           id: userId,
@@ -115,8 +111,6 @@ const App: React.FC = () => {
           full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0],
           role: metaRole
         };
-        // Background creation for table consistency
-        // Fixed: supabase builder is not a native promise with .catch until .then() is called to resolve it
         supabase.from('profiles').upsert(profileData).then(({ error }) => { if (error) console.error(error); });
       }
       
@@ -129,7 +123,6 @@ const App: React.FC = () => {
       setProfile(profileData);
       const effectiveTenantId = profileData?.tenant_id || metaTenantId;
 
-      // 2. Fetch all workspace data in parallel
       if (effectiveTenantId) {
         const [tRes, vRes, rRes, nRes, lRes, mRes, uRes] = await Promise.allSettled([
           supabase.from('tenants').select('*').eq('id', effectiveTenantId).maybeSingle(),
@@ -150,21 +143,43 @@ const App: React.FC = () => {
 
         if (vRes.status === 'fulfilled' && vRes.value.data) {
           setVehicles(vRes.value.data.map(v => ({
-            id: v.id, tenantId: v.tenant_id, registrationNumber: v.registration_number, make: v.make, model: v.model, year: v.year, type: v.type as any, addedDate: v.added_date, isDraft: v.is_draft
+            id: v.id, 
+            tenantId: v.tenant_id, 
+            registrationNumber: v.registration_number, 
+            make: v.make, 
+            model: v.model, 
+            year: v.year, 
+            type: v.type as any, 
+            addedDate: v.added_date, 
+            isDraft: v.is_draft
           })));
         }
 
         if (rRes.status === 'fulfilled' && rRes.value.data) {
-          // Fixed: alertDays_before was used instead of the required alertDaysBefore from ComplianceRecord interface
           setRecords(rRes.value.data.map(r => ({
-            id: r.id, tenantId: r.tenant_id, vehicleId: r.vehicle_id, type: r.type as ComplianceType, expiryDate: r.expiry_date || '', lastRenewedDate: r.last_renewed_date || '', isDraft: r.is_draft, sentReminders: r.sent_reminders || [], documentName: r.document_name, documentUrl: r.document_url, alertEnabled: r.alert_enabled !== false, alertDaysBefore: r.alert_days_before || 15
+            id: r.id, 
+            tenantId: r.tenant_id, 
+            vehicleId: r.vehicle_id, 
+            type: r.type as ComplianceType, 
+            expiryDate: r.expiry_date || '', 
+            lastRenewedDate: r.last_renewed_date || '', 
+            isDraft: r.is_draft, 
+            sentReminders: r.sent_reminders || [], 
+            documentName: r.document_name, 
+            documentUrl: r.document_url, 
+            alertEnabled: r.alert_enabled !== false, 
+            alertDaysBefore: r.alert_days_before || 15
           })));
         }
 
         if (nRes.status === 'fulfilled' && nRes.value.data) {
           const n = nRes.value.data;
           setAutomationConfig({ 
-            tenantId: n.tenant_id, recipients: Array.isArray(n.recipients) ? n.recipients : [], defaultThresholds: Array.isArray(n.default_thresholds) ? n.default_thresholds : [30, 15, 7, 3, 1], enabled: n.enabled !== false, emailTemplate: n.email_template 
+            tenantId: n.tenant_id, 
+            recipients: Array.isArray(n.recipients) ? n.recipients : [], 
+            defaultThresholds: Array.isArray(n.default_thresholds) ? n.default_thresholds : [30, 15, 7, 3, 1], 
+            enabled: n.enabled !== false, 
+            emailTemplate: n.email_template 
           });
         }
 
@@ -183,7 +198,6 @@ const App: React.FC = () => {
         }
       }
 
-      // 3. Super Admin logic
       if (profileData?.role === UserRole.SUPER_ADMIN) {
         const [stRes, slRes] = await Promise.allSettled([
           supabase.from('tenants').select('*, profiles(full_name, role)'),
@@ -192,8 +206,13 @@ const App: React.FC = () => {
         
         if (stRes.status === 'fulfilled' && stRes.value.data) {
           setAllTenants(stRes.value.data.map(t => ({
-            id: t.id, name: t.name, ownerEmail: ((t.profiles as any[]) || []).find(p => p.role === UserRole.TENANT_ADMIN)?.full_name || 'System',
-            plan: t.plan as SubscriptionPlan, status: t.status as TenantStatus, createdAt: t.created_at, subscriptionExpiry: t.subscription_expiry
+            id: t.id, 
+            name: t.name, 
+            ownerEmail: ((t.profiles as any[]) || []).find(p => p.role === UserRole.TENANT_ADMIN)?.full_name || 'System',
+            plan: t.plan as SubscriptionPlan, 
+            status: t.status as TenantStatus, 
+            createdAt: t.created_at, 
+            subscriptionExpiry: t.subscription_expiry
           })));
         }
         
@@ -205,7 +224,7 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Critical Registry Load Error:", err);
-      addToast('Sync Error', 'Workspace connection unstable. Retrying...', 'error');
+      addToast('Sync Error', 'Workspace connection unstable.', 'error');
     } finally {
       setSyncingIdentity(false);
       setLoading(false);
@@ -252,29 +271,17 @@ const App: React.FC = () => {
 
   const onAddVehicle = async (v: Vehicle) => {
     const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-    
-    if (!activeTenantId) {
-      addToast('Identity Syncing', 'Establishing workspace link...', 'warning');
-      await fetchTenantData(session?.user?.id, true);
-      const retryId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-      if (!retryId) {
-        addToast('Sync Error', 'Could not resolve fleet identity.', 'error');
-        return;
-      }
-      v.tenantId = retryId;
-    } else {
-      v.tenantId = activeTenantId;
-    }
+    if (!activeTenantId) return;
     
     const dbData = {
-      tenant_id: v.tenantId,
+      tenant_id: activeTenantId,
       registration_number: (v.registrationNumber || '').toUpperCase().trim(),
       make: v.make,
       model: v.model,
       year: v.year,
       type: v.type,
       added_date: v.addedDate,
-      is_draft: v.is_draft
+      is_draft: !!v.isDraft
     };
 
     try {
@@ -297,22 +304,6 @@ const App: React.FC = () => {
       <div className="spinner mb-6" />
       <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2">Notify Me</h2>
       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Syncing Secure Registry</p>
-    </div>
-  );
-
-  if (session && !profile && !syncingIdentity) return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-slate-950 p-6 text-center">
-      <ICONS.Alert className="w-12 h-12 text-red-500 mb-4" />
-      <h2 className="text-xl font-display font-bold">Workspace Connection Pending</h2>
-      <p className="text-sm text-slate-500 max-w-xs mt-2">Linking your account to the fleet registry. This often resolves with a single refresh.</p>
-      <div className="flex flex-col gap-3 mt-8">
-        <button onClick={() => fetchTenantData(session.user.id, true)} className="px-8 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-xl shadow-primary-500/20">
-          Sync Workspace Now
-        </button>
-        <button onClick={handleSignOut} className="px-8 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl font-bold">
-          Sign Out
-        </button>
-      </div>
     </div>
   );
 
@@ -378,7 +369,7 @@ const App: React.FC = () => {
                     document_url: r.documentUrl,
                     alert_enabled: r.alertEnabled,
                     alert_days_before: r.alertDaysBefore,
-                    is_draft: r.isDraft
+                    is_draft: !!r.isDraft
                   };
                   await supabase.from('compliance_records').upsert(dbData); 
                   fetchTenantData(session.user.id, true); 
