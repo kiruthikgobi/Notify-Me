@@ -1,6 +1,6 @@
 
 import React, { useState, useRef } from 'react';
-import { Vehicle, ComplianceRecord, ComplianceAuditInsight, ComplianceType, UserRole } from '../types';
+import { Vehicle, ComplianceRecord, ComplianceAuditInsight, ComplianceType, UserRole, VehicleMake } from '../types';
 import { ICONS } from '../constants';
 import { getComplianceAudit } from '../services/geminiService';
 import { exportToExcel } from '../utils/exportUtils';
@@ -8,19 +8,25 @@ import ConfirmationModal from './ConfirmationModal';
 
 interface VehicleDetailProps {
   vehicle: Vehicle;
+  vehicleMakes: VehicleMake[];
+  // Added missing records prop
   records: ComplianceRecord[];
+  onUpdateVehicle: (vehicle: Vehicle) => void;
   onUpdateRecord: (record: ComplianceRecord) => void;
   onDeleteVehicle: (id: string) => void;
   onBack: () => void;
   userRole?: UserRole;
 }
 
-const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, records, onUpdateRecord, onDeleteVehicle, onBack, userRole }) => {
+// Added records to destructuring
+const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, records, onUpdateVehicle, onUpdateRecord, onDeleteVehicle, onBack, userRole }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditResult, setAuditResult] = useState<ComplianceAuditInsight | null>(null);
   const [activeUploadId, setActiveUploadId] = useState<string | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isEditingVehicle, setIsEditingVehicle] = useState(false);
+  const [editVehicleData, setEditVehicleData] = useState<Vehicle | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [localEdit, setLocalEdit] = useState<ComplianceRecord | null>(null);
@@ -89,6 +95,19 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, records, onUpdat
     }
   };
 
+  const startEditVehicle = () => {
+    setEditVehicleData({ ...vehicle });
+    setIsEditingVehicle(true);
+  };
+
+  const saveEditVehicle = () => {
+    if (editVehicleData) {
+      onUpdateVehicle(editVehicleData);
+      setIsEditingVehicle(false);
+      setEditVehicleData(null);
+    }
+  };
+
   const getStatusInfo = (expiryDate: string, isDraft: boolean = false) => {
     if (isDraft) return { color: 'text-amber-600 bg-amber-50 dark:bg-amber-900/10', label: 'Draft / Unverified' };
     if (!expiryDate) return { color: 'text-slate-400 bg-slate-100 dark:bg-slate-800', label: 'Data Missing' };
@@ -99,6 +118,9 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, records, onUpdat
     if (expiry < soon) return { color: 'text-amber-600 bg-amber-50 dark:bg-amber-900/10', label: 'Expiring Soon' };
     return { color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/10', label: 'Active / Verified' };
   };
+
+  const currentYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 41 }, (_, i) => currentYear - i);
 
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-500 pb-20">
@@ -121,8 +143,16 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, records, onUpdat
         <div className="lg:col-span-2 space-y-6">
           <div className="ui-card p-8 rounded-3xl border-l-4 border-l-primary-600">
             <div className="flex flex-col md:flex-row justify-between items-start gap-6">
-              <div>
-                <span className="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-2.5 py-1 rounded-full uppercase tracking-widest">{vehicle.type}</span>
+              <div className="flex-1">
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-2.5 py-1 rounded-full uppercase tracking-widest">{vehicle.type}</span>
+                  {!isReadOnly && (
+                    <button onClick={startEditVehicle} className="text-[10px] font-black text-slate-400 hover:text-primary-600 uppercase tracking-widest flex items-center gap-1">
+                      <ICONS.FileText className="w-3 h-3" />
+                      Edit Info
+                    </button>
+                  )}
+                </div>
                 <h2 className="text-3xl font-display font-black text-slate-900 dark:text-white mt-3 tracking-tight uppercase">
                   {vehicle.registrationNumber}
                 </h2>
@@ -311,6 +341,38 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, records, onUpdat
           </div>
         </div>
       </div>
+
+      {/* Edit Vehicle Info Modal */}
+      {isEditingVehicle && editVehicleData && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-[200] flex items-end md:items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-t-[2.5rem] md:rounded-[2.5rem] p-6 md:p-10 w-full max-w-xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-300 overflow-y-auto max-h-[95vh] safe-pb">
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="text-2xl font-display font-bold">Edit Vehicle Info</h3>
+              <button onClick={() => setIsEditingVehicle(false)} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><ICONS.Plus className="w-6 h-6 rotate-45 text-slate-400" /></button>
+            </div>
+            <div className="space-y-6">
+              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Registration Number</label><input autoFocus className="w-full p-4 md:p-5 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-black text-xl md:text-2xl uppercase tracking-tighter shadow-inner transition-all" placeholder="MH-12-AS-1234" value={editVehicleData.registrationNumber} onChange={e => setEditVehicleData({...editVehicleData, registrationNumber: e.target.value})} /></div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturer</label><input list="makes-list-detail" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all shadow-inner" placeholder="e.g. TATA" value={editVehicleData.make} onChange={e => setEditVehicleData({...editVehicleData, make: e.target.value})} /><datalist id="makes-list-detail">{vehicleMakes.map(m => <option key={m.id} value={m.name} />)}</datalist></div>
+                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturing Year</label><select className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all shadow-inner appearance-none cursor-pointer" value={editVehicleData.year} onChange={e => setEditVehicleData({...editVehicleData, year: parseInt(e.target.value)})}>{yearOptions.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
+              </div>
+              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Vehicle Class</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {['Truck', 'Bus', 'Car', 'Lorry'].map(type => (
+                    <button key={type} type="button" onClick={() => setEditVehicleData({...editVehicleData, type: type as any})} className={`py-4 rounded-xl font-bold transition-all border-2 ${editVehicleData.type === type ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600' : 'border-slate-100 dark:border-slate-800 text-slate-400'}`}>
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="pt-10 grid grid-cols-2 gap-4">
+                <button onClick={() => setIsEditingVehicle(false)} className="py-5 border-2 border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-300 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95">Cancel</button>
+                <button onClick={saveEditVehicle} className="py-5 bg-primary-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-primary-500/20 transition-all active:scale-95">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmationModal 
         isOpen={isDeleteModalOpen}

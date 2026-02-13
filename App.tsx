@@ -276,6 +276,34 @@ const App: React.FC = () => {
     }
   };
 
+  const onUpdateVehicle = async (v: Vehicle) => {
+    const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
+    if (!activeTenantId) return;
+
+    const dbData = {
+      id: v.id,
+      tenant_id: activeTenantId,
+      registration_number: (v.registrationNumber || '').toUpperCase().trim(),
+      make: v.make,
+      model: v.model,
+      year: v.year,
+      type: v.type,
+      is_draft: !!v.isDraft
+    };
+
+    try {
+      const { error } = await supabase.from('vehicles').update(dbData).eq('id', v.id);
+      if (error) {
+        addToast('Update Refused', error.message, 'error');
+      } else {
+        addToast('Success', 'Asset updated successfully', 'success');
+        fetchTenantData(session.user.id, true);
+      }
+    } catch (err: any) {
+      addToast('System Error', 'Could not sync updates.', 'error');
+    }
+  };
+
   const navigateTo = (view: View) => {
     setActiveView(view);
     setIsMobileMenuOpen(false);
@@ -392,8 +420,8 @@ const App: React.FC = () => {
             ) : (
               <>
                 {activeView === 'dashboard' && <Dashboard vehicles={vehicles} records={records} onViewVehicle={(id) => { setSelectedVehicleId(id); setActiveView('detail'); }} onNavigateFleet={() => setActiveView('vehicles')} userRole={profile?.role} tenant={currentTenant || undefined} onUpgrade={() => setActiveView('subscription')} />}
-                {activeView === 'vehicles' && <VehicleList vehicles={vehicles} records={records} vehicleMakes={vehicleMakes} userRole={profile?.role} tenantPlan={currentTenant?.plan} onAdd={onAddVehicle} onSelect={(v) => { setSelectedVehicleId(v.id); setActiveView('detail'); }} onDelete={async (id) => { await supabase.from('vehicles').delete().eq('id', id); fetchTenantData(session.user.id, true); }} onUpgradeRedirect={() => setActiveView('subscription')} />}
-                {activeView === 'detail' && selectedVehicleId && <VehicleDetail vehicle={vehicles.find(v => v.id === selectedVehicleId)!} records={records.filter(r => r.vehicleId === selectedVehicleId)} userRole={profile?.role} onUpdateRecord={async (r) => { 
+                {activeView === 'vehicles' && <VehicleList vehicles={vehicles} records={records} vehicleMakes={vehicleMakes} userRole={profile?.role} tenantPlan={currentTenant?.plan} onAdd={onAddVehicle} onUpdate={onUpdateVehicle} onSelect={(v) => { setSelectedVehicleId(v.id); setActiveView('detail'); }} onDelete={async (id) => { await supabase.from('vehicles').delete().eq('id', id); fetchTenantData(session.user.id, true); }} onUpgradeRedirect={() => setActiveView('subscription')} />}
+                {activeView === 'detail' && selectedVehicleId && <VehicleDetail vehicle={vehicles.find(v => v.id === selectedVehicleId)!} vehicleMakes={vehicleMakes} records={records.filter(r => r.vehicleId === selectedVehicleId)} userRole={profile?.role} onUpdateVehicle={onUpdateVehicle} onUpdateRecord={async (r) => { 
                   const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
                   if (!activeTenantId) return;
                   const dbData = {
