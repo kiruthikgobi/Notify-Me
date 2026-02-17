@@ -73,6 +73,10 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
     return { label: 'Healthy', color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' };
   };
 
+  const hasAlertsEnabled = (vid: string) => {
+    return records.filter(r => r.vehicleId === vid).some(r => r.alertEnabled);
+  };
+
   const handleAdd = (draft: boolean = false) => {
     if (isReadOnly || !newVehicle.registrationNumber?.trim()) return;
     onAdd({ 
@@ -131,9 +135,11 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 animate-in slide-in-from-bottom-2 duration-300">
             {filteredVehicles.map(v => {
               const status = getComplianceStatus(v.id);
+              const alerts = hasAlertsEnabled(v.id);
               return (
                 <div key={v.id} onClick={() => onSelect(v)} className={`ui-card rounded-[1.5rem] p-5 md:p-6 cursor-pointer hover:border-primary-300 dark:hover:border-primary-700 relative transition-all flex flex-col h-full ${v.isDraft ? 'border-dashed' : 'hover:shadow-elevated shadow-soft'}`}>
                   <div className="absolute top-4 right-4 flex items-center gap-2">
+                    {alerts && <ICONS.Bell className="w-4 h-4 text-primary-500 animate-pulse" />}
                     {!isReadOnly && (
                       <>
                         <button onClick={(e) => { e.stopPropagation(); setEditingVehicle(v); }} className="p-2.5 text-slate-300 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"><ICONS.FileText className="w-4 h-4" /></button>
@@ -162,8 +168,9 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
                 <thead>
                   <tr className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800">
                     <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Registration</th>
-                    <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Manufacturer Details</th>
+                    <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Type & Model</th>
                     <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Compliance Status</th>
+                    <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Alerts</th>
                     <th className="p-5 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
                   </tr>
                 </thead>
@@ -171,8 +178,22 @@ const VehicleList: React.FC<VehicleListProps> = ({ vehicles, records, vehicleMak
                   {filteredVehicles.map(v => (
                     <tr key={v.id} onClick={() => onSelect(v)} className="hover:bg-slate-50/30 cursor-pointer transition-colors group">
                       <td className="p-5 font-display font-black text-slate-900 dark:text-white uppercase tracking-tight">{v.registrationNumber}</td>
-                      <td className="p-5 text-xs font-medium text-slate-600 dark:text-slate-300">{v.make} {v.model} ({v.year})</td>
+                      <td className="p-5">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-slate-600 dark:text-slate-300">{v.make} {v.model} ({v.year})</span>
+                          <span className="text-[9px] text-slate-400 font-medium uppercase mt-1">{v.type}</span>
+                        </div>
+                      </td>
                       <td className="p-5"><span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg ${getComplianceStatus(v.id).color}`}>{getComplianceStatus(v.id).label}</span></td>
+                      <td className="p-5 text-center">
+                        <div className="flex justify-center">
+                          {hasAlertsEnabled(v.id) ? (
+                            <ICONS.Bell className="w-4 h-4 text-primary-500" title="Notifications Active" />
+                          ) : (
+                            <ICONS.Bell className="w-4 h-4 text-slate-200 dark:text-slate-800" title="Notifications Disabled" />
+                          )}
+                        </div>
+                      </td>
                       <td className="p-5 text-right"><div className="flex justify-end gap-2">
                         {!isReadOnly && (
                           <button onClick={(e) => { e.stopPropagation(); setEditingVehicle(v); }} className="p-2 text-slate-300 hover:text-primary-600 transition-colors"><ICONS.FileText className="w-4 h-4" /></button>

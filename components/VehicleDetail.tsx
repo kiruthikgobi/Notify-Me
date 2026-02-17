@@ -9,7 +9,6 @@ import ConfirmationModal from './ConfirmationModal';
 interface VehicleDetailProps {
   vehicle: Vehicle;
   vehicleMakes: VehicleMake[];
-  // Added missing records prop
   records: ComplianceRecord[];
   onUpdateVehicle: (vehicle: Vehicle) => void;
   onUpdateRecord: (record: ComplianceRecord) => void;
@@ -18,7 +17,6 @@ interface VehicleDetailProps {
   userRole?: UserRole;
 }
 
-// Added records to destructuring
 const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, records, onUpdateVehicle, onUpdateRecord, onDeleteVehicle, onBack, userRole }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
@@ -31,8 +29,10 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
 
   const [localEdit, setLocalEdit] = useState<ComplianceRecord | null>(null);
 
-  // Updated Permission Logic
   const isReadOnly = userRole === UserRole.TENANT_VIEWER;
+
+  // We iterate over all compliance types to ensure the UI always shows placeholders for missing data
+  const allDocTypes = Object.values(ComplianceType);
 
   const handleAudit = async () => {
     setIsAuditing(true);
@@ -74,22 +74,27 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
     }
   };
 
-  const startEdit = (record: ComplianceRecord) => {
+  const startEdit = (docType: ComplianceType) => {
     if (isReadOnly) return;
-    setEditingId(record.id);
-    setLocalEdit({ ...record });
+    const existing = records.find(r => r.type === docType);
+    
+    setEditingId(existing ? existing.id : `temp-${docType}`);
+    setLocalEdit(existing || {
+      id: `temp-${docType}`,
+      vehicleId: vehicle.id,
+      tenantId: vehicle.tenantId,
+      type: docType,
+      expiryDate: '',
+      lastRenewedDate: '',
+      alertEnabled: true,
+      alertDaysBefore: 15,
+      isDraft: true
+    });
   };
 
   const saveEdit = (isDraft: boolean) => {
     if (localEdit) {
-      const original = records.find(r => r.id === localEdit.id);
-      const updated = { ...localEdit, isDraft };
-      
-      if (original?.expiryDate !== localEdit.expiryDate) {
-        updated.lastAlertSentDate = null;
-      }
-
-      onUpdateRecord(updated);
+      onUpdateRecord({ ...localEdit, isDraft });
       setEditingId(null);
       setLocalEdit(null);
     }
@@ -197,20 +202,23 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
           <div className="ui-card rounded-3xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 shadow-soft">
             <div className="p-6 bg-slate-50/50 dark:bg-slate-800/20 flex justify-between items-center">
                 <span className="font-black text-[9px] uppercase tracking-[0.2em] text-slate-400">Compliance Documentation</span>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{records.length} Total Records</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{allDocTypes.length} Monitored Aspects</span>
             </div>
             
-            {records.map(record => {
-              const status = getStatusInfo(record.expiryDate, record.isDraft);
-              const isAlertWindow = record.expiryDate && !record.isDraft && (() => {
+            {allDocTypes.map(docType => {
+              const record = records.find(r => r.type === docType);
+              const status = getStatusInfo(record?.expiryDate || '', record?.isDraft);
+              const isAlertWindow = record?.expiryDate && !record?.isDraft && (() => {
                 const expiry = new Date(record.expiryDate);
                 const alertStart = new Date(expiry);
                 alertStart.setDate(expiry.getDate() - record.alertDaysBefore);
                 return new Date() >= alertStart;
               })();
 
+              const isEditing = editingId === (record ? record.id : `temp-${docType}`);
+
               return (
-                <div key={record.id} className={`p-6 hover:bg-slate-50/30 transition-all group ${record.isDraft ? 'bg-amber-50/10' : ''}`}>
+                <div key={docType} className={`p-6 hover:bg-slate-50/30 transition-all group ${record?.isDraft ? 'bg-amber-50/10' : ''}`}>
                   <div className="flex flex-col md:flex-row justify-between gap-6">
                     <div className="flex gap-4">
                       <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-110 ${status.color}`}>
@@ -218,14 +226,14 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                            {record.type}
-                            {record.isDraft && <span className="bg-amber-100 text-amber-600 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ml-1">Draft</span>}
-                            {isAlertWindow && record.alertEnabled && (
+                            {docType}
+                            {record?.isDraft && <span className="bg-amber-100 text-amber-600 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ml-1">Draft</span>}
+                            {isAlertWindow && record?.alertEnabled && (
                               <span className="bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase ml-1 animate-pulse">Alerting Daily</span>
                             )}
                         </h4>
                         
-                        {editingId === record.id && localEdit ? (
+                        {isEditing && localEdit ? (
                           <div className="mt-5 space-y-6 bg-white dark:bg-slate-900 p-6 rounded-2xl border-2 border-primary-500 shadow-2xl animate-in fade-in slide-in-from-top-2">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                               <div>
@@ -273,36 +281,38 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                             <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${status.color}`}>{status.label}</span>
                             <div className="flex items-center gap-5">
                               {!isReadOnly && (
-                                <button onClick={() => startEdit(record)} className="text-[10px] font-black uppercase tracking-widest text-primary-600 hover:text-primary-700 flex items-center gap-1.5 transition-colors">
+                                <button onClick={() => startEdit(docType)} className="text-[10px] font-black uppercase tracking-widest text-primary-600 hover:text-primary-700 flex items-center gap-1.5 transition-colors">
                                   <ICONS.Plus className="w-3.5 h-3.5" />
-                                  Add Details
+                                  {record ? 'Edit Details' : 'Add Details'}
                                 </button>
                               )}
                               
                               <div className="flex items-center gap-2">
-                                {!isReadOnly && (
+                                {!isReadOnly && record && (
                                   <button onClick={() => triggerUpload(record.id)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-primary-600 flex items-center gap-1.5 transition-colors">
                                     <ICONS.Download className="w-3.5 h-3.5 rotate-180" />
-                                    Document
+                                    Upload
                                   </button>
                                 )}
-                                {record.documentUrl && (
-                                  <button onClick={() => viewDocument(record.documentUrl!)} className="text-[10px] font-black uppercase tracking-widest text-emerald-600 px-2.5 py-1 bg-emerald-50 rounded-lg">View</button>
+                                {record?.documentUrl && (
+                                  <button onClick={() => viewDocument(record.documentUrl!)} className="text-[10px] font-black uppercase tracking-widest text-emerald-600 px-2.5 py-1 bg-emerald-50 rounded-lg">View Doc</button>
                                 )}
                               </div>
                             </div>
-                            <div className="w-full flex items-center gap-4 mt-1">
+                            {record && (
+                              <div className="w-full flex items-center gap-4 mt-1">
                                 <span className={`text-[9px] font-bold uppercase tracking-wider ${record.alertEnabled ? 'text-primary-500' : 'text-slate-300'}`}>
                                   {record.alertEnabled ? `Daily Reminder Active (-${record.alertDaysBefore}d)` : 'Alerts Disabled'}
                                 </span>
-                            </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     </div>
                     <div className="md:text-right flex flex-col justify-center shrink-0">
-                      <p className={`text-xl font-display font-black leading-none ${record.isDraft ? 'text-slate-300' : 'text-slate-900 dark:text-white'}`}>
-                          {record.expiryDate || '-- -- ----'}
+                      <p className={`text-xl font-display font-black leading-none ${record?.isDraft ? 'text-slate-300' : 'text-slate-900 dark:text-white'}`}>
+                          {record?.expiryDate || '-- -- ----'}
                       </p>
                       <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1.5">Expires On</p>
                     </div>
@@ -320,29 +330,14 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                <ICONS.Check className="w-5 h-5 text-white/50" />
             </h4>
             <p className="text-sm text-white/80 mb-8 leading-relaxed">Download a secure PDF/CSV summary for regulatory inspections and internal auditing.</p>
-            <button onClick={() => exportToExcel([vehicle], records, `Audit_${vehicle.registrationNumber}`)} className="w-full py-4 bg-white text-primary-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95 shadow-xl group-hover:shadow-white/20">Generate Export</button>
-          </div>
-
-          <div className="ui-card p-8 rounded-3xl space-y-5">
-             <h4 className="font-display font-bold tracking-tight text-lg">Asset Summary</h4>
-             <div className="space-y-4">
-                {[
-                    { label: 'Model Year', val: vehicle.year },
-                    { label: 'Manufacturer', val: vehicle.make },
-                    { label: 'Category', val: vehicle.type },
-                    { label: 'Alerting Docs', val: records.filter(r => r.alertEnabled).length }
-                ].map((item, i) => (
-                    <div key={i} className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800 last:border-0">
-                       <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{item.label}</span>
-                       <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{item.val}</span>
-                    </div>
-                ))}
-             </div>
+            <button onClick={() => exportToExcel([vehicle], records, `Audit_${vehicle.registrationNumber}`)} className="w-full py-4 bg-white text-primary-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-2">
+              <ICONS.Download className="w-4 h-4" />
+              Download Audit
+            </button>
           </div>
         </div>
       </div>
-
-      {/* Edit Vehicle Info Modal */}
+      
       {isEditingVehicle && editVehicleData && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-[200] flex items-end md:items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 rounded-t-[2.5rem] md:rounded-[2.5rem] p-6 md:p-10 w-full max-w-xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-300 overflow-y-auto max-h-[95vh] safe-pb">
@@ -351,38 +346,21 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
               <button onClick={() => setIsEditingVehicle(false)} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><ICONS.Plus className="w-6 h-6 rotate-45 text-slate-400" /></button>
             </div>
             <div className="space-y-6">
-              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Registration Number</label><input autoFocus className="w-full p-4 md:p-5 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-black text-xl md:text-2xl uppercase tracking-tighter shadow-inner transition-all" placeholder="MH-12-AS-1234" value={editVehicleData.registrationNumber} onChange={e => setEditVehicleData({...editVehicleData, registrationNumber: e.target.value})} /></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturer</label><input list="makes-list-detail" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all shadow-inner" placeholder="e.g. TATA" value={editVehicleData.make} onChange={e => setEditVehicleData({...editVehicleData, make: e.target.value})} /><datalist id="makes-list-detail">{vehicleMakes.map(m => <option key={m.id} value={m.name} />)}</datalist></div>
-                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturing Year</label><select className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold transition-all shadow-inner appearance-none cursor-pointer" value={editVehicleData.year} onChange={e => setEditVehicleData({...editVehicleData, year: parseInt(e.target.value)})}>{yearOptions.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
-              </div>
-              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Vehicle Class</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {['Truck', 'Bus', 'Car', 'Lorry'].map(type => (
-                    <button key={type} type="button" onClick={() => setEditVehicleData({...editVehicleData, type: type as any})} className={`py-4 rounded-xl font-bold transition-all border-2 ${editVehicleData.type === type ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600' : 'border-slate-100 dark:border-slate-800 text-slate-400'}`}>
-                      {type}
-                    </button>
-                  ))}
-                </div>
+              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Registration Number</label><input className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-black text-xl uppercase tracking-tighter" value={editVehicleData.registrationNumber} onChange={e => setEditVehicleData({...editVehicleData, registrationNumber: e.target.value})} /></div>
+              <div className="grid grid-cols-2 gap-6">
+                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturer</label><input list="makes-list-detail" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold" value={editVehicleData.make} onChange={e => setEditVehicleData({...editVehicleData, make: e.target.value})} /><datalist id="makes-list-detail">{vehicleMakes.map(m => <option key={m.id} value={m.name} />)}</datalist></div>
+                <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Year</label><select className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold" value={editVehicleData.year} onChange={e => setEditVehicleData({...editVehicleData, year: parseInt(e.target.value)})}>{yearOptions.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
               </div>
             </div>
-            <div className="pt-10 grid grid-cols-2 gap-4">
-                <button onClick={() => setIsEditingVehicle(false)} className="py-5 border-2 border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-300 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95">Cancel</button>
-                <button onClick={saveEditVehicle} className="py-5 bg-primary-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-primary-500/20 transition-all active:scale-95">Save Changes</button>
+            <div className="pt-10 flex gap-4">
+              <button onClick={() => setIsEditingVehicle(false)} className="flex-1 py-4 text-slate-400 font-bold">Cancel</button>
+              <button onClick={saveEditVehicle} className="flex-1 py-4 bg-primary-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-primary-500/20">Save Changes</button>
             </div>
           </div>
         </div>
       )}
 
-      <ConfirmationModal 
-        isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        onConfirm={() => onDeleteVehicle(vehicle.id)}
-        title="Permanently Remove Asset?"
-        message={`This action will purge the registration ${vehicle.registrationNumber} and all its audit history from your fleet workspace. This cannot be undone.`}
-        confirmText="Purge Asset"
-        type="danger"
-      />
+      <ConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={() => onDeleteVehicle(vehicle.id)} title="Remove Asset?" message={`Are you sure you want to permanently delete "${vehicle.registrationNumber}"? All records will be lost.`} confirmText="Delete Asset" />
     </div>
   );
 };

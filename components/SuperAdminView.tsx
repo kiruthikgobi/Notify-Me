@@ -31,6 +31,7 @@ const SuperAdminView: React.FC<Props> = ({ tenants, logs, onTenantUpdate, onDele
         .select(`
           id,
           full_name,
+          email,
           role,
           updated_at,
           tenant_id,
@@ -139,49 +140,56 @@ const SuperAdminView: React.FC<Props> = ({ tenants, logs, onTenantUpdate, onDele
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {tenants.map(tenant => (
-                  <tr key={tenant.id} className="hover:bg-slate-50/30 dark:hover:bg-slate-800/10 transition-colors">
-                    <td className="p-6">
-                      <div className="font-bold text-slate-900 dark:text-white">{tenant.name}</div>
-                      <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 mt-1">
-                         Admin: {tenant.ownerEmail}
-                      </div>
-                    </td>
-                    <td className="p-6">
-                      {/* Fixed: Replaced SubscriptionPlan.PREMIUM with SubscriptionPlan.PRO */}
-                      <span className={`text-[9px] font-black px-2 py-1 rounded-md border ${
-                         tenant.plan === SubscriptionPlan.PRO ? 'bg-amber-50 border-amber-200 text-amber-600' : 
-                         'bg-slate-50 border-slate-200 text-slate-600'
-                       }`}>
-                         {tenant.plan}
-                       </span>
-                    </td>
-                    <td className="p-6">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${tenant.status === TenantStatus.ACTIVE ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                        <span className="text-[10px] font-black uppercase tracking-widest">{tenant.status}</span>
-                      </div>
-                    </td>
-                    <td className="p-6 text-right space-x-2">
-                       <button 
-                         onClick={() => toggleStatus(tenant)}
-                         className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                           tenant.status === TenantStatus.ACTIVE 
-                           ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' 
-                           : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                         }`}
-                       >
-                         {tenant.status === TenantStatus.ACTIVE ? 'Suspend' : 'Activate'}
-                       </button>
-                       <button 
-                         onClick={() => setDeleteModal({ open: true, id: tenant.id, name: tenant.name, admin: tenant.ownerEmail })}
-                         className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-red-50 text-red-600 hover:bg-red-100 transition-all"
-                       >
-                         Delete
-                       </button>
+                {tenants.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+                      No active workspaces found on this platform.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  tenants.map(tenant => (
+                    <tr key={tenant.id} className="hover:bg-slate-50/30 dark:hover:bg-slate-800/10 transition-colors">
+                      <td className="p-6">
+                        <div className="font-bold text-slate-900 dark:text-white">{tenant.name}</div>
+                        <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 mt-1">
+                           Admin: {tenant.ownerEmail}
+                        </div>
+                      </td>
+                      <td className="p-6">
+                        <span className={`text-[9px] font-black px-2 py-1 rounded-md border ${
+                           tenant.plan === SubscriptionPlan.PRO ? 'bg-amber-50 border-amber-200 text-amber-600' : 
+                           'bg-slate-50 border-slate-200 text-slate-600'
+                         }`}>
+                           {tenant.plan}
+                         </span>
+                      </td>
+                      <td className="p-6">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${tenant.status === TenantStatus.ACTIVE ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">{tenant.status}</span>
+                        </div>
+                      </td>
+                      <td className="p-6 text-right space-x-2">
+                         <button 
+                           onClick={() => toggleStatus(tenant)}
+                           className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                             tenant.status === TenantStatus.ACTIVE 
+                             ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' 
+                             : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                           }`}
+                         >
+                           {tenant.status === TenantStatus.ACTIVE ? 'Suspend' : 'Activate'}
+                         </button>
+                         <button 
+                           onClick={() => setDeleteModal({ open: true, id: tenant.id, name: tenant.name, admin: tenant.ownerEmail })}
+                           className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-red-50 text-red-600 hover:bg-red-100 transition-all"
+                         >
+                           Delete
+                         </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -203,36 +211,37 @@ const SuperAdminView: React.FC<Props> = ({ tenants, logs, onTenantUpdate, onDele
                   <tr>
                     <td colSpan={4} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs animate-pulse">Syncing user directory...</td>
                   </tr>
-                ) : globalUsers.map(user => (
-                  <tr key={user.id} className="hover:bg-slate-50/30 dark:hover:bg-slate-800/10 transition-colors">
-                    <td className="p-6">
-                      <div className="font-bold text-slate-900 dark:text-white">{user.full_name}</div>
-                      <div className="text-[10px] text-slate-400 font-medium">UID: {user.id.substring(0, 8)}...</div>
-                    </td>
-                    <td className="p-6">
-                      <span className={`text-[9px] font-black px-2 py-1 rounded-md border ${
-                        user.role === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' :
-                        user.role === UserRole.TENANT_ADMIN ? 'bg-primary-50 border-primary-200 text-primary-600' :
-                        'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}>
-                        {user.role}
-                      </span>
-                    </td>
-                    <td className="p-6">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${user.tenants?.name ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                        <span className="font-bold text-slate-700 dark:text-slate-300">{user.tenants?.name || 'PLATFORM_ROOT'}</span>
-                      </div>
-                    </td>
-                    <td className="p-6 text-right text-[10px] text-slate-400 font-medium">
-                      {new Date(user.updated_at).toLocaleDateString()}
-                    </td>
+                ) : globalUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">No users registered on the platform.</td>
                   </tr>
-                ))}
-                {!loadingUsers && globalUsers.length === 0 && (
-                   <tr>
-                     <td colSpan={4} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">No users found.</td>
-                   </tr>
+                ) : (
+                  globalUsers.map(user => (
+                    <tr key={user.id} className="hover:bg-slate-50/30 dark:hover:bg-slate-800/10 transition-colors">
+                      <td className="p-6">
+                        <div className="font-bold text-slate-900 dark:text-white">{user.full_name}</div>
+                        <div className="text-[11px] text-primary-600 font-bold tracking-tight mt-0.5">{user.email}</div>
+                      </td>
+                      <td className="p-6">
+                        <span className={`text-[9px] font-black px-2 py-1 rounded-md border ${
+                          user.role === UserRole.SUPER_ADMIN ? 'bg-amber-50 border-amber-200 text-amber-600' :
+                          user.role === UserRole.TENANT_ADMIN ? 'bg-primary-50 border-primary-200 text-primary-600' :
+                          'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}>
+                          {user.role}
+                        </span>
+                      </td>
+                      <td className="p-6">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full ${user.tenants?.name ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                          <span className="font-bold text-slate-700 dark:text-slate-300">{user.tenants?.name || 'PLATFORM_ROOT'}</span>
+                        </div>
+                      </td>
+                      <td className="p-6 text-right text-[10px] text-slate-400 font-medium">
+                        {new Date(user.updated_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -252,25 +261,26 @@ const SuperAdminView: React.FC<Props> = ({ tenants, logs, onTenantUpdate, onDele
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {logs.map(log => (
-                  <tr key={log.id} className="text-xs">
-                    <td className="p-6 font-bold">{log.recipient}</td>
-                    <td className="p-6 font-mono text-[11px]">{log.vehicleReg}</td>
-                    <td className="p-6">{log.docType}</td>
-                    <td className="p-6">
-                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${log.status === 'SENT' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                         {log.status}
-                       </span>
-                    </td>
-                    <td className="p-6 text-right text-slate-400 font-medium">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </td>
+                {logs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">No notifications processed yet.</td>
                   </tr>
-                ))}
-                {logs.length === 0 && (
-                   <tr>
-                     <td colSpan={5} className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">No notifications processed yet.</td>
-                   </tr>
+                ) : (
+                  logs.map(log => (
+                    <tr key={log.id} className="text-xs">
+                      <td className="p-6 font-bold">{log.recipient}</td>
+                      <td className="p-6 font-mono text-[11px]">{log.vehicleReg}</td>
+                      <td className="p-6">{log.docType}</td>
+                      <td className="p-6">
+                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${log.status === 'SENT' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                           {log.status}
+                         </span>
+                      </td>
+                      <td className="p-6 text-right text-slate-400 font-medium">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>

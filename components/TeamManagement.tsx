@@ -47,7 +47,8 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ tenantId, tenantName, u
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signUp({
+      // Create user in Supabase Auth
+      const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
@@ -55,21 +56,31 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ tenantId, tenantName, u
             full_name: email.split('@')[0],
             role: selectedRole,
             tenant_id: tenantId,
-            organization_name: tenantName || 'Unknown Organization'
+            company_name: tenantName || 'Fleet Workspace'
           }
         }
       });
 
-      if (error) throw error;
+      if (authError) {
+        console.log("Team Member Auth SignUp Error:", authError);
+        throw authError;
+      }
 
       if (data.user) {
-        await supabase.from('profiles').upsert({
+        // Explicitly upsert into profiles (formerly users table)
+        const { error: profileError } = await supabase.from('profiles').upsert({
           id: data.user.id,
           full_name: email.split('@')[0],
+          email: email.trim(), // Ensure email field is included
           role: selectedRole,
           tenant_id: tenantId,
           updated_at: new Date().toISOString()
         });
+        
+        if (profileError) {
+          console.log("Team Member Profile Creation Error:", profileError);
+          throw profileError;
+        }
       }
 
       addToast('Success', 'Team member added successfully.', 'success');
@@ -84,6 +95,7 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ tenantId, tenantName, u
       }, 1000);
 
     } catch (err: any) {
+      console.log("Team Member Add Exception:", err);
       addToast('Error', err.message || 'Could not create team member.', 'error');
     } finally {
       setLoading(false);
@@ -93,17 +105,23 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ tenantId, tenantName, u
   const handleRemoveUser = async (id: string) => {
     if (!isAdmin) return;
     try {
+      // Delete from profiles table
       const { error } = await supabase.from('profiles').delete().eq('id', id);
-      if (error) throw error;
+      if (error) {
+        console.log("Error removing profile:", error);
+        throw error;
+      }
       addToast('Access Revoked', 'Team member removed.', 'info');
       onRefresh();
     } catch (err: any) {
+      console.log("Team Member Remove Exception:", err);
       addToast('Error', 'Could not remove team member.', 'error');
     }
   };
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
+      case UserRole.SUPER_ADMIN: return 'Administrator';
       case UserRole.TENANT_ADMIN: return 'Administrator';
       case UserRole.TENANT_MANAGER: return 'Full Access';
       case UserRole.TENANT_VIEWER: return 'Read Only';

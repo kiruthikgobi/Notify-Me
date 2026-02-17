@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GlobalAutomationConfig, VehicleMake } from '../types';
 import { ICONS } from '../constants';
 import ConfirmationModal from './ConfirmationModal';
 
 interface AutomationSettingsProps {
-  config: GlobalAutomationConfig;
+  config: GlobalAutomationConfig | null;
+  loading: boolean;
   vehicleMakes: VehicleMake[];
   onUpdate: (config: GlobalAutomationConfig) => void;
   onAddMake: (name: string) => Promise<void>;
   onRemoveMake: (id: string) => Promise<void>;
 }
 
-const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicleMakes = [], onUpdate, onAddMake, onRemoveMake }) => {
+const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, loading, vehicleMakes = [], onUpdate, onAddMake, onRemoveMake }) => {
   const [newEmail, setNewEmail] = useState('');
   const [newMake, setNewMake] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -26,15 +27,22 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
     name: ''
   });
 
-  // Ensure recipients and makes are always arrays
-  const recipients = Array.isArray(config?.recipients) ? config.recipients : [];
-  const defaultThresholds = Array.isArray(config?.defaultThresholds) ? config.defaultThresholds : [30, 15, 7, 3, 1];
+  const recipients = config?.recipients || [];
+  const defaultThresholds = config?.defaultThresholds || [30, 15, 7, 3, 1];
   const makes = Array.isArray(vehicleMakes) ? vehicleMakes : [];
 
   const addEmail = () => {
+    // For first time setup, we create a skeleton config if it's null
+    const currentConfig = config || { 
+      tenantId: 'temp', 
+      recipients: [], 
+      defaultThresholds: [30, 15, 7, 3, 1], 
+      enabled: true 
+    };
+    
     const trimmed = newEmail.trim();
-    if (trimmed && trimmed.includes('@') && !recipients.includes(trimmed)) {
-      onUpdate({ ...config, recipients: [...recipients, trimmed] });
+    if (trimmed && trimmed.includes('@') && !currentConfig.recipients.includes(trimmed)) {
+      onUpdate({ ...currentConfig, recipients: [...currentConfig.recipients, trimmed] });
       setNewEmail('');
     }
   };
@@ -56,6 +64,7 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
   };
 
   const removeEmail = (email: string) => {
+    if (!config) return;
     onUpdate({ ...config, recipients: recipients.filter(e => e !== email) });
     if (editingIndex !== null) setEditingIndex(null);
   };
@@ -66,6 +75,7 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
   };
 
   const saveEdit = (index: number) => {
+    if (!config) return;
     const trimmed = editValue.trim();
     if (trimmed && trimmed.includes('@')) {
       const newRecipients = [...recipients];
@@ -81,11 +91,38 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
   };
 
   const toggleThreshold = (val: number) => {
-    const thresholds = defaultThresholds.includes(val)
-      ? defaultThresholds.filter(t => t !== val)
-      : [...defaultThresholds, val].sort((a, b) => b - a);
-    onUpdate({ ...config, defaultThresholds: thresholds });
+    const currentConfig = config || { 
+      tenantId: 'temp', 
+      recipients: [], 
+      defaultThresholds: [30, 15, 7, 3, 1], 
+      enabled: true 
+    };
+    
+    const thresholds = currentConfig.defaultThresholds.includes(val)
+      ? currentConfig.defaultThresholds.filter(t => t !== val)
+      : [...currentConfig.defaultThresholds, val].sort((a, b) => b - a);
+      
+    onUpdate({ ...currentConfig, defaultThresholds: thresholds });
   };
+
+  // Improved loading state logic
+  if (loading) {
+    return (
+      <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+        <header>
+          <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white tracking-tight">Alert Configuration</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Synchronizing your organization's automation engine...</p>
+        </header>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+           <div className="ui-card p-12 rounded-3xl flex flex-col items-center justify-center text-center col-span-2 border-dashed border-2">
+              <div className="w-16 h-16 rounded-full border-4 border-primary-100 border-t-primary-600 animate-spin mb-6" />
+              <h3 className="text-xl font-display font-black text-slate-900 dark:text-white uppercase tracking-tight">Updating Alert Registry</h3>
+              <p className="text-sm text-slate-400 mt-2 font-medium">Please hold on while we connect to your secure workspace node.</p>
+           </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20">
@@ -93,6 +130,13 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
         <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white">Alert & Data Settings</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1">Manage automated multi-recipient expiry updates, delivery schedules, and fleet data templates.</p>
       </header>
+
+      {!config && (
+        <div className="p-6 bg-primary-50 dark:bg-primary-900/20 rounded-2xl border border-primary-200 dark:border-primary-800 text-center mb-6">
+           <p className="text-sm font-bold text-primary-700 dark:text-primary-300">Workspace Automation Initializing</p>
+           <p className="text-[10px] text-primary-600 mt-1 uppercase tracking-widest font-black">Configure your first recipient below to activate the engine.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="ui-card p-8 rounded-2xl space-y-6 flex flex-col">
@@ -209,7 +253,7 @@ const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config, vehicle
                 <p className="text-sm text-slate-500 max-w-md font-medium">When active, Notify Me performs background checks and dispatches updates based on your rules.</p>
               </div>
             </div>
-            <button onClick={() => onUpdate({ ...config, enabled: !config?.enabled })} className={`w-full md:w-auto px-12 py-4 rounded-2xl font-black text-sm tracking-widest transition-all shadow-xl active:scale-95 ${config?.enabled ? 'bg-emerald-600 text-white shadow-emerald-500/20 hover:bg-emerald-700' : 'bg-slate-800 text-white shadow-slate-500/10 hover:bg-slate-700'}`}>
+            <button onClick={() => onUpdate({ ...config!, enabled: !config?.enabled })} className={`w-full md:w-auto px-12 py-4 rounded-2xl font-black text-sm tracking-widest transition-all shadow-xl active:scale-95 ${config?.enabled ? 'bg-emerald-600 text-white shadow-emerald-500/20 hover:bg-emerald-700' : 'bg-slate-800 text-white shadow-slate-500/10 hover:bg-slate-700'}`}>
               {config?.enabled ? 'SERVICE RUNNING' : 'SERVICE STOPPED'}
             </button>
           </div>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Vehicle, 
@@ -24,7 +25,7 @@ import ActionHistory from './components/ActionHistory';
 import Toast from './components/Toast';
 import Auth from './components/Auth';
 import ConfirmationModal from './components/ConfirmationModal';
-import { supabase } from './services/supabaseClient';
+import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 
 declare global {
   interface Window {
@@ -50,6 +51,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [syncingIdentity, setSyncingIdentity] = useState(false);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [vehicleFilter, setVehicleFilter] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => 
     document.documentElement.classList.contains('dark') || localStorage.getItem('theme') === 'dark'
   );
@@ -59,16 +61,11 @@ const App: React.FC = () => {
   );
   
   const [automationConfig, setAutomationConfig] = useState<GlobalAutomationConfig | null>(null);
+  const [automationLoading, setAutomationLoading] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   
   const lastFetchedUserId = useRef<string | null>(null);
-
-  const toggleSidebar = () => {
-    const newState = !isSidebarCollapsed;
-    setIsSidebarCollapsed(newState);
-    localStorage.setItem('sidebar_collapsed', String(newState));
-  };
 
   const addToast = useCallback((title: string, message: string, type: ToastMessage['type'] = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -77,161 +74,219 @@ const App: React.FC = () => {
 
   const removeToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setProfile(null);
-    setCurrentTenant(null);
-    setAutomationConfig(null);
-    setSyncingIdentity(false);
-    lastFetchedUserId.current = null;
-    setIsSignOutModalOpen(false);
+  const toggleSidebar = () => {
+    const newState = !isSidebarCollapsed;
+    setIsSidebarCollapsed(newState);
+    localStorage.setItem('sidebar_collapsed', String(newState));
+  };
+
+  const navigateTo = (view: View) => {
+    setActiveView(view);
     setIsMobileMenuOpen(false);
   };
 
   const fetchTenantData = useCallback(async (userId: string, force: boolean = false) => {
+    if (!isSupabaseConfigured()) {
+      addToast('Configuration Error', 'Supabase is not connected.', 'error');
+      setLoading(false);
+      return;
+    }
+
     if (!force && lastFetchedUserId.current === userId && profile) return;
     
     setSyncingIdentity(true);
+    setAutomationLoading(true);
     lastFetchedUserId.current = userId;
     
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const metaTenantId = user?.user_metadata?.tenant_id;
-      const metaRole = user?.user_metadata?.role || UserRole.TENANT_ADMIN;
-
-      let { data: profileData } = await supabase
+      console.log(`Syncing profile for: ${userId}`);
+      const { data: pData, error: pError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
-      
-      if (!profileData && metaTenantId) {
-        profileData = {
-          id: userId,
-          tenant_id: metaTenantId,
-          full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0],
-          role: metaRole
-        };
-        supabase.from('profiles').upsert(profileData).then(({ error }) => { if (error) console.error(error); });
+
+      if (pError) {
+        console.error('Profile fetch failed:', pError);
+        throw pError;
       }
-      
-      if (!profileData && !metaTenantId && metaRole !== UserRole.SUPER_ADMIN) {
+
+      if (!pData) {
+        console.warn('No profile found for ID:', userId);
         setSyncingIdentity(false);
         setLoading(false);
         return;
       }
 
-      setProfile(profileData);
-      const effectiveTenantId = profileData?.tenant_id || metaTenantId;
+      setProfile(pData);
+      const tid = pData.tenant_id;
+      const isSuper = pData.role === UserRole.SUPER_ADMIN;
 
-      if (effectiveTenantId) {
-        const [tRes, vRes, rRes, nRes, lRes, mRes, uRes] = await Promise.allSettled([
-          supabase.from('tenants').select('*').eq('id', effectiveTenantId).maybeSingle(),
-          supabase.from('vehicles').select('*').eq('tenant_id', effectiveTenantId).order('added_date', { ascending: false }),
-          supabase.from('compliance_records').select('*').eq('tenant_id', effectiveTenantId),
-          supabase.from('automation_config').select('*').eq('tenant_id', effectiveTenantId).maybeSingle(),
-          supabase.from('notification_logs').select('*').eq('tenant_id', effectiveTenantId).order('timestamp', { ascending: false }).limit(100),
-          supabase.from('vehicle_makes').select('*').eq('tenant_id', effectiveTenantId).order('name', { ascending: true }),
-          supabase.from('profiles').select('*').eq('tenant_id', effectiveTenantId)
+      // Global fetches for Super Admin
+      if (isSuper) {
+        console.log('User is SUPER_ADMIN. Fetching global registry...');
+        const [tenantsRes, logsRes] = await Promise.all([
+          supabase.from('tenants').select('*, profiles(full_name, email, role)'),
+          supabase.from('notification_logs').select('*').order('timestamp', { ascending: false }).limit(100)
+        ]);
+
+        if (tenantsRes.error) console.error('Global tenants fetch error:', tenantsRes.error);
+        if (tenantsRes.data) {
+          setAllTenants(tenantsRes.data.map((t: any) => ({
+            id: t.id, 
+            name: t.name, 
+            ownerEmail: (t.profiles as any[])?.find(p => p.role === UserRole.TENANT_ADMIN)?.email || 'System Account',
+            plan: t.plan as SubscriptionPlan, 
+            status: t.status as TenantStatus, 
+            createdAt: t.created_at, 
+            subscriptionExpiry: t.subscription_expiry
+          })));
+        }
+
+        if (logsRes.data) {
+          setLogs(logsRes.data.map((l: any) => ({
+            id: l.id,
+            tenantId: l.tenant_id,
+            vehicleReg: l.vehicle_reg,
+            docType: l.doc_type,
+            recipient: l.recipient,
+            status: l.status,
+            timestamp: l.timestamp
+          })));
+        }
+      }
+
+      // Tenant-specific fetches
+      if (tid) {
+        console.log(`Fetching data for tenant workspace: ${tid}`);
+        const [tRes, vRes, rRes, nRes, mRes, uRes] = await Promise.allSettled([
+          supabase.from('tenants').select('*').eq('id', tid).maybeSingle(),
+          supabase.from('vehicles').select('*').eq('tenant_id', tid).order('added_date', { ascending: false }),
+          supabase.from('compliance_records').select('*').eq('tenant_id', tid),
+          supabase.from('automation_config').select('*').eq('tenant_id', tid).maybeSingle(),
+          supabase.from('vehicle_makes').select('*').eq('tenant_id', tid).order('name', { ascending: true }),
+          supabase.from('profiles').select('*').eq('tenant_id', tid)
         ]);
 
         if (tRes.status === 'fulfilled' && tRes.value.data) {
-          const t = tRes.value.data;
+          const tData = tRes.value.data;
           setCurrentTenant({
-            id: t.id, name: t.name, ownerEmail: '', plan: t.plan as SubscriptionPlan, status: t.status as TenantStatus, createdAt: t.created_at, subscriptionExpiry: t.subscription_expiry, paymentId: t.last_payment_id
+            id: tData.id,
+            name: tData.name,
+            ownerEmail: pData.email,
+            plan: tData.plan as SubscriptionPlan,
+            status: tData.status as TenantStatus,
+            createdAt: tData.created_at,
+            subscriptionExpiry: tData.subscription_expiry,
+            paymentId: tData.last_payment_id
           });
         }
 
         if (vRes.status === 'fulfilled' && vRes.value.data) {
-          setVehicles(vRes.value.data.map(v => ({
-            id: v.id, tenantId: v.tenant_id, registrationNumber: v.registration_number, make: v.make, model: v.model, year: v.year, type: v.type as any, addedDate: v.added_date, isDraft: v.is_draft
+          setVehicles(vRes.value.data.map((v: any) => ({
+            id: v.id, tenantId: v.tenant_id, registrationNumber: v.registration_number, make: v.make, model: v.model, year: v.year, type: v.type, addedDate: v.added_date, isDraft: v.is_draft
           })));
         }
 
         if (rRes.status === 'fulfilled' && rRes.value.data) {
-          setRecords(rRes.value.data.map(r => ({
-            id: r.id, tenantId: r.tenant_id, vehicleId: r.vehicle_id, type: r.type as ComplianceType, expiryDate: r.expiry_date || '', lastRenewedDate: r.last_renewed_date || '', isDraft: r.is_draft, sentReminders: r.sent_reminders || [], documentName: r.document_name, documentUrl: r.document_url, alertEnabled: r.alert_enabled !== false, alertDaysBefore: r.alert_days_before || 15
+          setRecords(rRes.value.data.map((r: any) => ({
+            id: r.id, 
+            tenantId: r.tenant_id, 
+            vehicleId: r.vehicle_id, 
+            type: r.type as ComplianceType, 
+            expiryDate: r.expiry_date || '', 
+            lastRenewedDate: r.last_renewed_date || '', 
+            isDraft: r.is_draft, 
+            sentReminders: r.sent_reminders || [], 
+            documentName: r.document_name, 
+            documentUrl: r.document_url, 
+            alertEnabled: r.alert_enabled !== false, 
+            alertDaysBefore: r.alert_days_before || 15
           })));
         }
 
         if (nRes.status === 'fulfilled' && nRes.value.data) {
-          const n = nRes.value.data;
           setAutomationConfig({ 
-            tenantId: n.tenant_id, recipients: Array.isArray(n.recipients) ? n.recipients : [], defaultThresholds: Array.isArray(n.default_thresholds) ? n.default_thresholds : [30, 15, 7, 3, 1], enabled: n.enabled !== false, emailTemplate: n.email_template 
+            tenantId: nRes.value.data.tenant_id, 
+            recipients: nRes.value.data.recipients || [], 
+            defaultThresholds: nRes.value.data.default_thresholds || [30, 15, 7, 3, 1], 
+            enabled: nRes.value.data.enabled !== false, 
+            emailTemplate: nRes.value.data.email_template 
           });
         }
 
-        if (lRes.status === 'fulfilled' && lRes.value.data) {
-          setLogs(lRes.value.data.map(l => ({
-            id: l.id, tenantId: l.tenant_id, vehicleReg: l.vehicle_reg, docType: l.doc_type, recipient: l.recipient, status: l.status as any, timestamp: l.timestamp
-          })));
-        }
-
         if (mRes.status === 'fulfilled' && mRes.value.data) {
-          setVehicleMakes(mRes.value.data.map(m => ({ id: m.id, tenantId: m.tenant_id, name: m.name })));
+          setVehicleMakes(mRes.value.data.map((m: any) => ({ id: m.id, tenantId: m.tenant_id, name: m.name })));
         }
 
         if (uRes.status === 'fulfilled' && uRes.value.data) {
           setTeamUsers(uRes.value.data);
         }
       }
-
-      if (profileData?.role === UserRole.SUPER_ADMIN) {
-        const [stRes, slRes] = await Promise.allSettled([
-          supabase.from('tenants').select('*, profiles(full_name, role)'),
-          supabase.from('notification_logs').select('*').order('timestamp', { ascending: false }).limit(100)
-        ]);
-        
-        if (stRes.status === 'fulfilled' && stRes.value.data) {
-          setAllTenants(stRes.value.data.map(t => ({
-            id: t.id, name: t.name, ownerEmail: ((t.profiles as any[]) || []).find(p => p.role === UserRole.TENANT_ADMIN)?.full_name || 'System',
-            plan: t.plan as SubscriptionPlan, status: t.status as TenantStatus, createdAt: t.created_at, subscriptionExpiry: t.subscription_expiry
-          })));
-        }
-        
-        if (slRes.status === 'fulfilled' && slRes.value.data) {
-          setLogs(slRes.value.data.map(l => ({
-            id: l.id, tenantId: l.tenant_id, vehicleReg: l.vehicle_reg, docType: l.doc_type, recipient: l.recipient, status: l.status as any, timestamp: l.timestamp
-          })));
-        }
-      }
     } catch (err: any) {
-      console.error("Critical Registry Load Error:", err);
-      addToast('Sync Error', 'Workspace connection unstable.', 'error');
+      console.error('Critical sync failure:', err);
+      addToast('Sync Error', 'Workspace connection lost.', 'error');
     } finally {
       setSyncingIdentity(false);
+      setAutomationLoading(false);
       setLoading(false);
     }
-  }, [addToast, profile]);
+  }, [session, addToast, profile]);
+
+  const handleSignOut = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error('Signout error:', error);
+    } catch (e) {
+      console.error('Signout exception:', e);
+    } finally {
+      setSession(null);
+      setProfile(null);
+      setCurrentTenant(null);
+      setAutomationConfig(null);
+      setVehicles([]);
+      setRecords([]);
+      setSyncingIdentity(false);
+      setLoading(false);
+      lastFetchedUserId.current = null;
+      setIsSignOutModalOpen(false);
+      setIsMobileMenuOpen(false);
+      setActiveView('dashboard');
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     const initializeAuth = async () => {
-      try {
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
-        if (mounted) {
-          setSession(initialSession);
-          if (!initialSession) setLoading(false);
-        }
-      } catch (e) {
-        if (mounted) setLoading(false);
+      if (!isSupabaseConfigured()) {
+        setLoading(false);
+        return;
+      }
+      
+      const { data: { session: initialSession }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) console.error('Initial session fetch error:', sessionError);
+
+      if (mounted) {
+        setSession(initialSession);
+        if (!initialSession) setLoading(false);
       }
     };
     initializeAuth();
     
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
-      if (mounted) {
+    if (isSupabaseConfigured()) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+        if (!mounted) return;
         setSession(currentSession);
-        if (!currentSession) {
-          setLoading(false);
+        if (event === 'SIGNED_OUT') {
           setProfile(null);
           setCurrentTenant(null);
-          lastFetchedUserId.current = null;
+          setAutomationConfig(null);
+          setLoading(false);
         }
-      }
-    });
-    return () => { mounted = false; subscription.unsubscribe(); };
+      });
+      return () => { mounted = false; subscription.unsubscribe(); };
+    }
   }, []);
 
   useEffect(() => { 
@@ -243,240 +298,258 @@ const App: React.FC = () => {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
-  useEffect(() => {
-    if (isMobileMenuOpen) document.body.classList.add('menu-open');
-    else document.body.classList.remove('menu-open');
-  }, [isMobileMenuOpen]);
-
-  const onAddVehicle = async (v: Vehicle) => {
-    const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-    if (!activeTenantId) return;
-    
-    const dbData = {
-      tenant_id: activeTenantId,
-      registration_number: (v.registrationNumber || '').toUpperCase().trim(),
-      make: v.make,
-      model: v.model,
-      year: v.year,
-      type: v.type,
-      added_date: v.addedDate,
-      is_draft: !!v.isDraft
-    };
+  const updateVehicle = async (v: Vehicle) => {
+    const tid = profile?.tenant_id;
+    if (!tid) return;
 
     try {
-      const { error } = await supabase.from('vehicles').insert(dbData); 
-      if (error) {
-        addToast('Registry Refused', error.message, 'error');
-      } else {
-        addToast('Success', 'Asset registered successfully', 'success');
-        fetchTenantData(session.user.id, true); 
-      }
+      const { error } = await supabase.from('vehicles').update({
+        registration_number: v.registrationNumber,
+        make: v.make,
+        model: v.model,
+        year: v.year,
+        type: v.type,
+        is_draft: v.isDraft
+      }).eq('id', v.id).eq('tenant_id', tid);
+      
+      if (error) throw error;
+      addToast('Vehicle Updated', `Registration ${v.registrationNumber} updated.`);
+      fetchTenantData(session.user.id, true);
     } catch (err: any) {
-      addToast('System Error', 'Could not access registry.', 'error');
+      console.error('Vehicle update error:', err);
+      addToast('Update Failed', err.message, 'error');
     }
   };
 
-  const onUpdateVehicle = async (v: Vehicle) => {
-    const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-    if (!activeTenantId) return;
-
-    const dbData = {
-      id: v.id,
-      tenant_id: activeTenantId,
-      registration_number: (v.registrationNumber || '').toUpperCase().trim(),
-      make: v.make,
-      model: v.model,
-      year: v.year,
-      type: v.type,
-      is_draft: !!v.isDraft
-    };
+  const addVehicle = async (v: Vehicle) => {
+    const tid = profile?.tenant_id;
+    if (!tid) {
+      addToast('Security Error', 'Workspace identity missing.', 'error');
+      return;
+    }
 
     try {
-      const { error } = await supabase.from('vehicles').update(dbData).eq('id', v.id);
-      if (error) {
-        addToast('Update Refused', error.message, 'error');
-      } else {
-        addToast('Success', 'Asset updated successfully', 'success');
-        fetchTenantData(session.user.id, true);
-      }
+      const { error } = await supabase.from('vehicles').insert({
+        tenant_id: tid,
+        registration_number: v.registrationNumber,
+        make: v.make,
+        model: v.model,
+        year: v.year,
+        type: v.type,
+        added_date: v.addedDate || new Date().toISOString().split('T')[0],
+        is_draft: v.isDraft || false
+      });
+      
+      if (error) throw error;
+      addToast('Vehicle Registered', `${v.registrationNumber} added.`);
+      fetchTenantData(session.user.id, true);
     } catch (err: any) {
-      addToast('System Error', 'Could not sync updates.', 'error');
+      console.error('Vehicle insertion error:', err);
+      addToast('Registration Failed', err.message, 'error');
     }
   };
 
-  const navigateTo = (view: View) => {
-    setActiveView(view);
-    setIsMobileMenuOpen(false);
+  const updateRecord = async (r: ComplianceRecord) => {
+    const tid = profile?.tenant_id;
+    if (!tid) return;
+
+    try {
+      const existing = records.find(rec => rec.vehicleId === r.vehicleId && rec.type === r.type);
+      const payload: any = {
+        tenant_id: tid,
+        vehicle_id: r.vehicleId,
+        type: r.type,
+        expiry_date: r.expiryDate || null,
+        last_renewed_date: r.lastRenewedDate || null,
+        document_name: r.documentName,
+        document_url: r.documentUrl,
+        alert_enabled: r.alertEnabled !== false,
+        alert_days_before: r.alertDaysBefore || 15,
+        is_draft: r.isDraft || false
+      };
+
+      if (existing) payload.id = existing.id;
+
+      const { error } = await supabase.from('compliance_records').upsert(payload);
+      if (error) throw error;
+      
+      addToast('Record Saved', `${r.type} updated.`);
+      fetchTenantData(session.user.id, true);
+    } catch (err: any) {
+      console.error('Compliance update error:', err);
+      addToast('Save Failed', err.message, 'error');
+    }
   };
+
+  const updateAutomation = async (c: GlobalAutomationConfig) => {
+    const tid = profile?.tenant_id;
+    if (!tid) return;
+
+    try {
+      const { error } = await supabase.from('automation_config').upsert({
+        tenant_id: tid,
+        recipients: c.recipients,
+        default_thresholds: c.defaultThresholds,
+        enabled: c.enabled
+      });
+      
+      if (error) throw error;
+      addToast('Settings Saved', 'Alert configuration updated.');
+      fetchTenantData(session.user.id, true);
+    } catch (err: any) {
+      console.error('Automation update error:', err);
+      addToast('Error Saving', err.message, 'error');
+    }
+  };
+
+  const addVehicleMake = async (name: string) => {
+    const tid = profile?.tenant_id;
+    if (!tid) return;
+
+    try {
+      const { error } = await supabase.from('vehicle_makes').insert({
+        tenant_id: tid,
+        name: name
+      });
+      
+      if (error) throw error;
+      addToast('Make Added', `"${name}" added.`);
+      fetchTenantData(session.user.id, true);
+    } catch (err: any) {
+      console.error('Make addition error:', err);
+      addToast('Error Adding Make', err.message, 'error');
+    }
+  };
+
+  const removeVehicleMake = async (id: string) => {
+    const tid = profile?.tenant_id;
+    if (!tid) return;
+
+    try {
+      const { error } = await supabase.from('vehicle_makes').delete().eq('id', id).eq('tenant_id', tid);
+      if (error) throw error;
+      addToast('Make Removed', 'Manufacturer deleted.');
+      fetchTenantData(session.user.id, true);
+    } catch (err: any) {
+      console.error('Make deletion error:', err);
+      addToast('Delete Failed', err.message, 'error');
+    }
+  };
+
+  if (!isSupabaseConfigured()) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-6 text-center">
+        <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 text-red-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl">
+           <ICONS.Alert className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">Configuration Required</h2>
+        <p className="max-w-md text-sm text-slate-500 font-medium">Supabase is not connected. Please check your environment variables.</p>
+      </div>
+    );
+  }
 
   if (!session && !loading) return <Auth onAuthComplete={() => {}} />;
 
   if (loading || (session && syncingIdentity && !profile)) return (
     <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-slate-950 p-6 text-center">
       <div className="spinner mb-6" />
-      <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2">Notify Me</h2>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Establishing Secure Workspace</p>
+      <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">Syncing Workspace</h2>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Establishing Secure Connection</p>
     </div>
-  );
-
-  const NavItems = () => (
-    <>
-      <NavButton active={activeView === 'dashboard'} onClick={() => navigateTo('dashboard')} icon={ICONS.Grid} label="Dashboard" collapsed={isSidebarCollapsed} />
-      <NavButton active={activeView === 'vehicles'} onClick={() => navigateTo('vehicles')} icon={ICONS.Truck} label="Inventory" collapsed={isSidebarCollapsed} />
-      <NavButton active={activeView === 'history'} onClick={() => navigateTo('history')} icon={ICONS.List} label="History" collapsed={isSidebarCollapsed} />
-      {(profile?.role === UserRole.TENANT_ADMIN || profile?.role === UserRole.TENANT_MANAGER) && (
-        <NavButton active={activeView === 'automation'} onClick={() => navigateTo('automation')} icon={ICONS.Bell} label="Alerts" collapsed={isSidebarCollapsed} />
-      )}
-      {profile?.role === UserRole.TENANT_ADMIN && (
-        <>
-          <NavButton active={activeView === 'team'} onClick={() => navigateTo('team')} icon={ICONS.Table} label="Team" collapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'subscription'} onClick={() => navigateTo('subscription')} icon={ICONS.Check} label="Billing" collapsed={isSidebarCollapsed} />
-        </>
-      )}
-    </>
   );
 
   return (
     <div className="h-screen w-full flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans overflow-hidden">
       <Toast toasts={toasts} removeToast={removeToast} />
       
-      {/* Mobile Top Header - Ergonomic Trigger on the Left */}
       <div className="lg:hidden flex items-center justify-between px-6 py-4 bg-navy-900 dark:bg-black text-white shrink-0 safe-pt border-b border-white/5 z-50 shadow-lg">
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10 transition-colors focus:ring-2 focus:ring-primary-500">
+        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
           {isMobileMenuOpen ? <ICONS.Plus className="w-6 h-6 rotate-45" /> : <ICONS.Menu className="w-6 h-6" />}
         </button>
         <div className="flex items-center gap-3">
           <ICONS.Logo className="w-7 h-7" />
           <span className="font-display font-black text-lg tracking-tight">Notify Me</span>
         </div>
-        <div className="w-10"></div> {/* Spacer for symmetry */}
+        <div className="w-10"></div> 
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Desktop Sidebar - Premium Left Navigation */}
-        <aside className={`hidden lg:flex ${isSidebarCollapsed ? 'w-20' : 'w-64'} bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 relative`}>
+        <aside className={`hidden lg:flex ${isSidebarCollapsed ? 'w-24' : 'w-72'} bg-navy-900 dark:bg-black border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 relative z-40`}>
           <button onClick={toggleSidebar} className="absolute -right-3 top-10 w-6 h-6 bg-primary-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-primary-500 transition-colors z-[60]">
             <ICONS.ChevronLeft className={`w-3.5 h-3.5 transition-transform duration-300 ${isSidebarCollapsed ? 'rotate-180' : ''}`} />
           </button>
-          <div className={`p-8 flex items-center gap-3 overflow-hidden ${isSidebarCollapsed ? 'justify-center p-6' : ''}`}>
-            <ICONS.Logo className="w-8 h-8 text-primary-500 shrink-0" />
-            {!isSidebarCollapsed && <span className="font-display font-black text-2xl text-white tracking-tight">Notify Me</span>}
+          
+          <div className={`p-8 flex flex-col gap-4 overflow-hidden ${isSidebarCollapsed ? 'items-center' : ''}`}>
+            <div className="flex items-center gap-3">
+              <ICONS.Logo className="w-8 h-8 text-primary-500 shrink-0" />
+              {!isSidebarCollapsed && <span className="font-display font-black text-2xl text-white tracking-tight">Notify Me</span>}
+            </div>
+            {!isSidebarCollapsed && currentTenant?.name && (
+              <div className="bg-white/5 rounded-xl p-3 border border-white/5 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Organization</p>
+                <p className="text-xs font-bold text-white truncate uppercase">{currentTenant.name}</p>
+              </div>
+            )}
           </div>
-          <nav className="flex-1 px-4 space-y-2 overflow-y-auto custom-scrollbar">
-            <NavItems />
+
+          <nav className="flex-1 px-4 space-y-2 overflow-y-auto custom-scrollbar pt-4">
+            <NavButton active={activeView === 'dashboard'} onClick={() => navigateTo('dashboard')} icon={ICONS.Grid} label="Dashboard" collapsed={isSidebarCollapsed} />
+            {profile?.role !== UserRole.SUPER_ADMIN && (
+              <>
+                <NavButton active={activeView === 'vehicles'} onClick={() => navigateTo('vehicles')} icon={ICONS.Truck} label="Inventory" collapsed={isSidebarCollapsed} />
+                <NavButton active={activeView === 'history'} onClick={() => navigateTo('history')} icon={ICONS.List} label="History" collapsed={isSidebarCollapsed} />
+              </>
+            )}
+            {(profile?.role === UserRole.TENANT_ADMIN || profile?.role === UserRole.TENANT_MANAGER) && (
+              <NavButton active={activeView === 'automation'} onClick={() => navigateTo('automation')} icon={ICONS.Bell} label="Alerts" collapsed={isSidebarCollapsed} />
+            )}
+            {profile?.role === UserRole.TENANT_ADMIN && (
+              <>
+                <NavButton active={activeView === 'team'} onClick={() => navigateTo('team')} icon={ICONS.Table} label="Team" collapsed={isSidebarCollapsed} />
+                <NavButton active={activeView === 'subscription'} onClick={() => navigateTo('subscription')} icon={ICONS.Check} label="Subscription" collapsed={isSidebarCollapsed} />
+              </>
+            )}
           </nav>
+
           <div className={`p-6 border-t border-white/5 space-y-2 ${isSidebarCollapsed ? 'p-4' : ''}`}>
             <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center gap-3 px-4 py-3.5 text-slate-400 hover:text-white hover:bg-white/5 transition-all rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
               {isDarkMode ? <ICONS.Sun className="w-4 h-4 shrink-0" /> : <ICONS.Moon className="w-4 h-4 shrink-0" />}
-              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Theme</span>}
+              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest">Theme</span>}
             </button>
             <button onClick={() => setIsSignOutModalOpen(true)} className={`w-full flex items-center gap-3 px-4 py-3.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all rounded-xl ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}>
               <ICONS.Plus className="w-4 h-4 rotate-45 shrink-0" />
-              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Logout</span>}
+              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest">Logout</span>}
             </button>
           </div>
         </aside>
 
-        {/* Mobile Sidebar Overlay - Slides in from LEFT to match desktop side */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden fixed inset-0 z-[100]">
-            <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setIsMobileMenuOpen(false)} />
-            <div className="absolute top-0 left-0 bottom-0 w-[85%] max-w-sm bg-navy-900 dark:bg-black text-white p-6 shadow-2xl animate-in slide-in-from-left duration-300 flex flex-col">
-              <div className="flex items-center justify-between mb-10 px-2">
-                <div className="flex items-center gap-3">
-                  <ICONS.Logo className="w-8 h-8" />
-                  <span className="font-display font-black text-2xl tracking-tight">Notify Me</span>
-                </div>
-                <button onClick={() => setIsMobileMenuOpen(false)} className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10">
-                  <ICONS.Plus className="w-5 h-5 rotate-45" />
-                </button>
-              </div>
-              <nav className="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar">
-                <NavItems />
-              </nav>
-              <div className="mt-auto pt-6 border-t border-white/10 space-y-4">
-                 <button onClick={() => { setIsDarkMode(!isDarkMode); setIsMobileMenuOpen(false); }} className="w-full flex items-center justify-between px-5 py-5 text-slate-400 hover:text-white bg-white/5 rounded-2xl transition-all">
-                  <div className="flex items-center gap-4">
-                    {isDarkMode ? <ICONS.Sun className="w-5 h-5 shrink-0" /> : <ICONS.Moon className="w-5 h-5 shrink-0" />}
-                    <span className="font-bold text-sm tracking-wide">Change Theme</span>
-                  </div>
-                </button>
-                <button onClick={() => { setIsSignOutModalOpen(true); setIsMobileMenuOpen(false); }} className="w-full flex items-center gap-4 px-5 py-5 text-red-400 hover:text-red-300 bg-red-500/10 rounded-2xl transition-all font-black text-xs tracking-widest uppercase">
-                  <ICONS.Plus className="w-5 h-5 rotate-45 shrink-0" />
-                  Sign Out
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12 transition-all duration-300 custom-scrollbar safe-pb">
           <div className="max-w-6xl mx-auto pb-12">
             {profile?.role === UserRole.SUPER_ADMIN ? (
-              <SuperAdminView tenants={allTenants} logs={logs} onTenantUpdate={() => fetchTenantData(session.user.id, true)} onDeleteTenant={async (id) => { 
-                await supabase.from('tenants').delete().eq('id', id); fetchTenantData(session.user.id, true); 
-              }} userRole={profile?.role} />
+              <SuperAdminView 
+                tenants={allTenants} 
+                logs={logs} 
+                onTenantUpdate={() => fetchTenantData(session.user.id, true)} 
+                onDeleteTenant={async (id) => { 
+                  try {
+                    const { error } = await supabase.from('tenants').delete().eq('id', id); 
+                    if (error) throw error;
+                    fetchTenantData(session.user.id, true); 
+                  } catch(e: any) {
+                    console.error('Purge error:', e);
+                    addToast('Delete Error', 'Failed to remove tenant workspace.', 'error');
+                  }
+                }} 
+                userRole={profile?.role} 
+              />
             ) : (
               <>
-                {activeView === 'dashboard' && <Dashboard vehicles={vehicles} records={records} onViewVehicle={(id) => { setSelectedVehicleId(id); setActiveView('detail'); }} onNavigateFleet={() => setActiveView('vehicles')} userRole={profile?.role} tenant={currentTenant || undefined} onUpgrade={() => setActiveView('subscription')} />}
-                {activeView === 'vehicles' && <VehicleList vehicles={vehicles} records={records} vehicleMakes={vehicleMakes} userRole={profile?.role} tenantPlan={currentTenant?.plan} onAdd={onAddVehicle} onUpdate={onUpdateVehicle} onSelect={(v) => { setSelectedVehicleId(v.id); setActiveView('detail'); }} onDelete={async (id) => { await supabase.from('vehicles').delete().eq('id', id); fetchTenantData(session.user.id, true); }} onUpgradeRedirect={() => setActiveView('subscription')} />}
-                {activeView === 'detail' && selectedVehicleId && <VehicleDetail vehicle={vehicles.find(v => v.id === selectedVehicleId)!} vehicleMakes={vehicleMakes} records={records.filter(r => r.vehicleId === selectedVehicleId)} userRole={profile?.role} onUpdateVehicle={onUpdateVehicle} onUpdateRecord={async (r) => { 
-                  const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-                  if (!activeTenantId) return;
-                  const dbData = {
-                    id: r.id,
-                    tenant_id: activeTenantId,
-                    vehicle_id: r.vehicleId,
-                    type: r.type,
-                    expiry_date: r.expiryDate,
-                    last_renewed_date: r.lastRenewedDate,
-                    document_name: r.documentName,
-                    document_url: r.documentUrl,
-                    alert_enabled: r.alertEnabled,
-                    alert_days_before: r.alertDaysBefore,
-                    is_draft: !!r.isDraft
-                  };
-                  await supabase.from('compliance_records').upsert(dbData); 
-                  fetchTenantData(session.user.id, true); 
-                }} onDeleteVehicle={async (id) => { await supabase.from('vehicles').delete().eq('id', id); setActiveView('vehicles'); fetchTenantData(session.user.id, true); }} onBack={() => setActiveView('vehicles')} />}
-                {activeView === 'team' && <TeamManagement tenantId={profile?.tenant_id || ''} users={teamUsers} onRefresh={() => fetchTenantData(session.user.id, true)} addToast={addToast} userRole={profile?.role} />}
-                {activeView === 'subscription' && (
-                  currentTenant 
-                  ? <SubscriptionPage tenant={currentTenant} vehicleCount={vehicles.length} onUpgrade={() => fetchTenantData(session.user.id, true)} /> 
-                  : <div className="p-20 text-center animate-pulse text-slate-400 font-bold uppercase tracking-widest text-xs">Connecting Billing Registry...</div>
-                )}
-                {activeView === 'automation' && (
-                  automationConfig 
-                  ? <AutomationSettings 
-                      config={automationConfig} 
-                      vehicleMakes={vehicleMakes} 
-                      onUpdate={async (c) => { 
-                        const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-                        if (!activeTenantId) return;
-                        const dbData = {
-                          tenant_id: activeTenantId,
-                          recipients: c.recipients,
-                          default_thresholds: c.defaultThresholds,
-                          enabled: c.enabled,
-                          email_template: c.emailTemplate
-                        };
-                        await supabase.from('automation_config').upsert(dbData); 
-                        fetchTenantData(session.user.id, true); 
-                      }} 
-                      onAddMake={async (name) => { 
-                        const activeTenantId = profile?.tenant_id || session?.user?.user_metadata?.tenant_id;
-                        if (!activeTenantId) return;
-                        await supabase.from('vehicle_makes').insert({ tenant_id: activeTenantId, name }); 
-                        fetchTenantData(session.user.id, true); 
-                      }} 
-                      onRemoveMake={async (id) => { 
-                        await supabase.from('vehicle_makes').delete().eq('id', id); 
-                        fetchTenantData(session.user.id, true); 
-                      }} 
-                    />
-                  : <div className="p-20 text-center animate-pulse text-slate-400 font-bold uppercase tracking-widest text-xs">Syncing Alert Protocols...</div>
-                )}
+                {activeView === 'dashboard' && <Dashboard vehicles={vehicles} records={records} automationConfig={automationConfig} onViewVehicle={(id) => { setSelectedVehicleId(id); setActiveView('detail'); }} onNavigateFleet={(f) => { setVehicleFilter(f); setActiveView('vehicles'); }} onNavigateAutomation={() => setActiveView('automation')} userRole={profile?.role} tenant={currentTenant || undefined} onUpgrade={() => setActiveView('subscription')} />}
+                {activeView === 'vehicles' && <VehicleList vehicles={vehicles} records={records} vehicleMakes={vehicleMakes} userRole={profile?.role} tenantPlan={currentTenant?.plan} onAdd={addVehicle} onUpdate={updateVehicle} onSelect={(v) => { setSelectedVehicleId(v.id); setActiveView('detail'); }} initialFilter={vehicleFilter} onClearFilter={() => setVehicleFilter(null)} onDelete={async (id) => { try { const tid = profile?.tenant_id; if(!tid) return; const { error } = await supabase.from('vehicles').delete().eq('id', id).eq('tenant_id', tid); if (error) throw error; fetchTenantData(session.user.id, true); } catch(e: any) { console.error('Vehicle deletion error:', e); addToast('Delete Error', 'Failed to remove vehicle.', 'error'); } }} onUpgradeRedirect={() => setActiveView('subscription')} />}
+                {activeView === 'detail' && selectedVehicleId && <VehicleDetail vehicle={vehicles.find(v => v.id === selectedVehicleId)!} vehicleMakes={vehicleMakes} records={records.filter(r => r.vehicleId === selectedVehicleId)} userRole={profile?.role} onUpdateVehicle={updateVehicle} onUpdateRecord={updateRecord} onDeleteVehicle={async (id) => { try { const tid = profile?.tenant_id; if(!tid) return; const { error } = await supabase.from('vehicles').delete().eq('id', id).eq('tenant_id', tid); if (error) throw error; setActiveView('vehicles'); fetchTenantData(session.user.id, true); } catch(e: any) { console.error('Asset purge error:', e); addToast('Purge Error', 'Could not delete asset records.', 'error'); } }} onBack={() => setActiveView('vehicles')} />}
+                {activeView === 'team' && <TeamManagement tenantId={profile?.tenant_id || ''} tenantName={currentTenant?.name} users={teamUsers} onRefresh={() => fetchTenantData(session.user.id, true)} addToast={addToast} userRole={profile?.role} />}
+                {activeView === 'subscription' && <SubscriptionPage tenant={currentTenant} vehicleCount={vehicles.length} onUpgrade={() => fetchTenantData(session.user.id, true)} />}
+                {activeView === 'automation' && <AutomationSettings config={automationConfig} loading={automationLoading} vehicleMakes={vehicleMakes} onUpdate={updateAutomation} onAddMake={addVehicleMake} onRemoveMake={removeVehicleMake} />}
                 {activeView === 'history' && <ActionHistory logs={logs} />}
               </>
             )}
@@ -490,11 +563,9 @@ const App: React.FC = () => {
 
 const NavButton = ({ active, onClick, icon: Icon, label, collapsed }: any) => (
   <button onClick={onClick} className={`w-full flex items-center transition-all duration-300 rounded-2xl relative lg:p-4 p-5 overflow-hidden group ${collapsed ? 'lg:justify-center' : 'lg:gap-4 gap-5'} ${active ? 'bg-primary-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-    {/* Active Indicator Bar */}
     {active && <div className="absolute left-0 top-3 bottom-3 w-1 bg-white rounded-r-full" />}
-    
     <Icon className={`w-5 h-5 shrink-0 transition-transform ${active ? 'scale-110' : 'group-hover:scale-110'}`} />
-    <span className={`font-black text-[10px] uppercase tracking-widest whitespace-nowrap transition-all duration-300 ${collapsed ? 'lg:w-0 lg:opacity-0' : 'w-auto opacity-100'}`}>{label}</span>
+    {!collapsed && <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap opacity-100 transition-opacity duration-300">{label}</span>}
   </button>
 );
 

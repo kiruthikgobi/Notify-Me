@@ -1,5 +1,6 @@
+
 -- ========================================================
--- FLEETGUARD SaaS: MASTER DATABASE SCHEMA
+-- FLEETGUARD SaaS: MASTER DATABASE SCHEMA (STABLE)
 -- ========================================================
 
 -- 1. Tenants Table
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tenants (
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT,
   full_name TEXT,
   role TEXT DEFAULT 'TENANT_ADMIN',
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -84,6 +86,19 @@ CREATE TABLE IF NOT EXISTS notification_logs (
   timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 8. Payments Table
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+  amount INTEGER NOT NULL,
+  currency TEXT DEFAULT 'INR',
+  status TEXT DEFAULT 'PENDING',
+  razorpay_order_id TEXT,
+  razorpay_payment_id TEXT,
+  razorpay_signature TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Enable RLS
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
@@ -92,52 +107,95 @@ ALTER TABLE compliance_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automation_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vehicle_makes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 
--- CLEANUP OLD POLICIES
+-- ========================================================
+-- SECURITY DEFINER HELPERS (Recursion-Safe & High Performance)
+-- ========================================================
+
+CREATE OR REPLACE FUNCTION get_my_tenant_id() 
+RETURNS UUID AS $$
+  SELECT COALESCE(
+    (NULLIF(current_setting('request.jwt.claims', true)::jsonb -> 'user_metadata' ->> 'tenant_id', ''))::uuid,
+    (SELECT tenant_id FROM public.profiles WHERE id = auth.uid())
+  );
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION is_super_admin() 
+RETURNS BOOLEAN AS $$
+  SELECT COALESCE(
+    (current_setting('request.jwt.claims', true)::jsonb -> 'user_metadata' ->> 'role' = 'SUPER_ADMIN'),
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'SUPER_ADMIN')
+  );
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION is_super_admin_configured() 
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE role = 'SUPER_ADMIN');
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+
+-- ========================================================
+-- RLS POLICY CLEANUP & RECREATION
+-- ========================================================
+
 DO $$ 
 DECLARE 
-  pol RECORD;
-BEGIN 
-  FOR pol IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public') 
-  LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, pol.tablename);
-  END LOOP;
+    pol record;
+BEGIN
+    FOR pol IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public') 
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, pol.tablename);
+    END LOOP;
 END $$;
 
--- ========================================================
--- RLS HELPER: RECURSION-PROOF JWT LOOKUP
--- ========================================================
--- Extracts tenant_id from user_metadata in the JWT. 
--- Bypasses recursion by not querying any tables.
-CREATE OR REPLACE FUNCTION public.get_auth_tenant_id()
-RETURNS UUID AS $$
-BEGIN
-  RETURN (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb -> 'user_metadata' ->> 'tenant_id')::uuid;
-EXCEPTION WHEN OTHERS THEN
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE;
+-- 1. Tenants Policies
+CREATE POLICY "tenants_super_admin" ON tenants FOR ALL USING (is_super_admin());
+CREATE POLICY "tenants_tenant_select" ON tenants FOR SELECT USING (id = get_my_tenant_id());
+CREATE POLICY "tenants_public_insert" ON tenants FOR INSERT WITH CHECK (true);
+
+-- 2. Profiles Policies
+CREATE POLICY "profiles_super_admin" ON profiles FOR ALL USING (is_super_admin());
+CREATE POLICY "profiles_self_access" ON profiles FOR ALL USING (id = auth.uid());
+CREATE POLICY "profiles_colleague_select" ON profiles FOR SELECT USING (tenant_id = get_my_tenant_id());
+
+-- 3. Vehicles Policies
+CREATE POLICY "vehicles_super_admin" ON vehicles FOR ALL USING (is_super_admin());
+CREATE POLICY "vehicles_tenant_access" ON vehicles FOR ALL 
+USING (tenant_id = get_my_tenant_id()) 
+WITH CHECK (tenant_id = get_my_tenant_id());
+
+-- 4. Compliance Records Policies
+CREATE POLICY "compliance_super_admin" ON compliance_records FOR ALL USING (is_super_admin());
+CREATE POLICY "compliance_select" ON compliance_records FOR SELECT USING (tenant_id = get_my_tenant_id());
+CREATE POLICY "compliance_insert" ON compliance_records FOR INSERT WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "compliance_update" ON compliance_records FOR UPDATE USING (tenant_id = get_my_tenant_id()) WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "compliance_delete" ON compliance_records FOR DELETE USING (tenant_id = get_my_tenant_id());
+
+-- 5. Automation Config Policies
+CREATE POLICY "automation_super_admin" ON automation_config FOR ALL USING (is_super_admin());
+CREATE POLICY "automation_select" ON automation_config FOR SELECT USING (tenant_id = get_my_tenant_id());
+CREATE POLICY "automation_insert" ON automation_config FOR INSERT WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "automation_update" ON automation_config FOR UPDATE USING (tenant_id = get_my_tenant_id()) WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "automation_delete" ON automation_config FOR DELETE USING (tenant_id = get_my_tenant_id());
+
+-- 6. Vehicle Makes Policies
+CREATE POLICY "makes_super_admin" ON vehicle_makes FOR ALL USING (is_super_admin());
+CREATE POLICY "makes_select" ON vehicle_makes FOR SELECT USING (tenant_id = get_my_tenant_id());
+CREATE POLICY "makes_insert" ON vehicle_makes FOR INSERT WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "makes_update" ON vehicle_makes FOR UPDATE USING (tenant_id = get_my_tenant_id()) WITH CHECK (tenant_id = get_my_tenant_id());
+CREATE POLICY "makes_delete" ON vehicle_makes FOR DELETE USING (tenant_id = get_my_tenant_id());
+
+-- 7. Notification Logs Policies
+CREATE POLICY "logs_super_admin" ON notification_logs FOR ALL USING (is_super_admin());
+CREATE POLICY "logs_tenant_read" ON notification_logs FOR SELECT 
+USING (tenant_id = get_my_tenant_id());
+
+-- 8. Payments Policies
+CREATE POLICY "payments_super_admin" ON payments FOR ALL USING (is_super_admin());
+CREATE POLICY "payments_tenant_read" ON payments FOR SELECT USING (tenant_id = get_my_tenant_id());
 
 -- ========================================================
--- GLOBAL POLICIES
--- ========================================================
-
--- Profiles: Allow self access and tenant-wide visibility for managers
-CREATE POLICY "Profiles_Self_Access" ON profiles FOR ALL USING (id = auth.uid());
-CREATE POLICY "Profiles_Tenant_Visibility" ON profiles FOR SELECT USING (tenant_id = get_auth_tenant_id());
-
--- Tenants: View own tenant info
-CREATE POLICY "Tenants_View_Own" ON tenants FOR SELECT USING (id = get_auth_tenant_id());
-
--- Data Tables: strict tenant isolation
-CREATE POLICY "Vehicles_Isolation" ON vehicles FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Compliance_Isolation" ON compliance_records FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Automation_Isolation" ON automation_config FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Makes_Isolation" ON vehicle_makes FOR ALL USING (tenant_id = get_auth_tenant_id());
-CREATE POLICY "Logs_Isolation" ON notification_logs FOR ALL USING (tenant_id = get_auth_tenant_id());
-
--- ========================================================
--- AUTOMATED PROVISIONING
+-- AUTH TRIGGER
 -- ========================================================
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -149,22 +207,22 @@ BEGIN
   v_tenant_id := (new.raw_user_metadata->>'tenant_id')::uuid;
   v_role := COALESCE(new.raw_user_metadata->>'role', 'TENANT_ADMIN');
 
-  -- Create Profile
-  INSERT INTO public.profiles (id, full_name, role, tenant_id)
+  INSERT INTO public.profiles (id, full_name, email, role, tenant_id)
   VALUES (
     new.id,
     COALESCE(new.raw_user_metadata->>'full_name', split_part(new.email, '@', 1)),
+    new.email,
     v_role,
     v_tenant_id
   )
-  ON CONFLICT (id) DO UPDATE 
-  SET 
+  ON CONFLICT (id) DO UPDATE SET
     full_name = EXCLUDED.full_name,
+    email = EXCLUDED.email,
     role = EXCLUDED.role,
-    tenant_id = COALESCE(profiles.tenant_id, EXCLUDED.tenant_id);
-
-  -- Create Automation Config for new Fleet Admins
-  IF (v_role = 'TENANT_ADMIN' AND v_tenant_id IS NOT NULL) THEN
+    tenant_id = EXCLUDED.tenant_id,
+    updated_at = NOW();
+  
+  IF v_role = 'TENANT_ADMIN' AND v_tenant_id IS NOT NULL THEN
     INSERT INTO public.automation_config (tenant_id, recipients)
     VALUES (v_tenant_id, ARRAY[new.email])
     ON CONFLICT (tenant_id) DO NOTHING;
@@ -178,29 +236,3 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
-
--- ========================================================
--- SUBSCRIPTION LIMITS
--- ========================================================
-
-CREATE OR REPLACE FUNCTION public.enforce_vehicle_limit()
-RETURNS trigger AS $$
-DECLARE
-  v_plan TEXT;
-  v_count INTEGER;
-BEGIN
-  SELECT plan INTO v_plan FROM public.tenants WHERE id = NEW.tenant_id;
-  IF v_plan = 'FREE' THEN
-    SELECT COUNT(*) INTO v_count FROM public.vehicles WHERE tenant_id = NEW.tenant_id;
-    IF v_count >= 5 THEN 
-      RAISE EXCEPTION 'Vehicle limit (5) reached for FREE plan. Please upgrade to Pro.'; 
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS tr_enforce_vehicle_limit ON vehicles;
-CREATE TRIGGER tr_enforce_vehicle_limit 
-  BEFORE INSERT ON vehicles 
-  FOR EACH ROW EXECUTE PROCEDURE public.enforce_vehicle_limit();
