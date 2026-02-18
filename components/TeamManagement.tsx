@@ -48,7 +48,8 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ tenantId, tenantName, u
     setLoading(true);
     try {
       // Create user in Supabase Auth
-      const { data, error: authError } = await supabase.auth.signUp({
+      // Cast auth to any to resolve property missing error on SupabaseAuthClient
+      const { data, error: authError } = await (supabase.auth as any).signUp({
         email: email.trim(),
         password,
         options: {

@@ -57,7 +57,8 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
         }
 
         // 2. Sign Up User
-        const { data: authData, error: signUpError } = await supabase.auth.signUp({ 
+        // Cast auth to any to resolve property missing error on SupabaseAuthClient
+        const { data: authData, error: signUpError } = await (supabase.auth as any).signUp({ 
           email: email.toLowerCase().trim(), 
           password,
           options: { 
@@ -81,7 +82,8 @@ const Auth: React.FC<AuthProps> = ({ onAuthComplete }) => {
         }
       } else {
         // Sign In
-        const { error: signInError } = await supabase.auth.signInWithPassword({ 
+        // Cast auth to any to resolve property missing error on SupabaseAuthClient
+        const { error: signInError } = await (supabase.auth as any).signInWithPassword({ 
           email: email.toLowerCase().trim(), 
           password 
         });
