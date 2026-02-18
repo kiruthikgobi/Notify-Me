@@ -85,6 +85,29 @@ const App: React.FC = () => {
     setIsMobileMenuOpen(false);
   };
 
+  const handleSignOut = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error('Signout error:', error);
+    } catch (e) {
+      console.error('Signout exception:', e);
+    } finally {
+      setSession(null);
+      setProfile(null);
+      setCurrentTenant(null);
+      setAutomationConfig(null);
+      setVehicles([]);
+      setRecords([]);
+      setSyncingIdentity(false);
+      setLoading(false);
+      lastFetchedUserId.current = null;
+      setIsSignOutModalOpen(false);
+      setIsMobileMenuOpen(false);
+      setActiveView('dashboard');
+    }
+  }, []);
+
   const fetchTenantData = useCallback(async (userId: string, force: boolean = false) => {
     if (!isSupabaseConfigured()) {
       addToast('Configuration Error', 'Supabase is not connected.', 'error');
@@ -92,7 +115,7 @@ const App: React.FC = () => {
       return;
     }
 
-    if (!force && lastFetchedUserId.current === userId && profile) return;
+    if (!force && lastFetchedUserId.current === userId && profile && profile.tenant_id) return;
     
     setSyncingIdentity(true);
     setAutomationLoading(true);
@@ -100,36 +123,50 @@ const App: React.FC = () => {
     
     try {
       console.log(`Syncing profile for: ${userId}`);
-      // Initial fetch
-      let { data: pData, error: pError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+      
+      // Robust profile fetch with retries (Supabase triggers can take 0.5-2 seconds)
+      let pData = null;
+      let pError = null;
+      let attempts = 0;
+      const maxAttempts = 5;
 
-      // If no profile found immediately, retry once after a short delay 
-      // (in case the trigger is still processing)
-      if (!pData && !pError) {
-        await new Promise(r => setTimeout(r, 1000));
-        const retry = await supabase
+      while (attempts < maxAttempts) {
+        if (attempts > 0) {
+          console.log(`Retrying profile sync (Attempt ${attempts + 1}/${maxAttempts})...`);
+          await new Promise(r => setTimeout(r, 1200 * attempts)); // Progressive backoff
+        }
+        
+        const { data, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .maybeSingle();
-        pData = retry.data;
-        pError = retry.error;
-      }
+        
+        pData = data;
+        pError = error;
+        attempts++;
 
-      if (pError) {
-        console.error('Profile fetch failed:', pError);
-        throw pError;
+        // Successful scenarios
+        if (pData && (pData.role === UserRole.SUPER_ADMIN || pData.tenant_id)) {
+          break;
+        }
+        
+        // If we found a profile but it has no tenant_id yet (trigger in progress), reset pData to continue loop
+        if (pData && !pData.tenant_id && pData.role !== UserRole.SUPER_ADMIN) {
+          pData = null;
+        }
+
+        if (pError) {
+          console.warn('Profile sync attempt error:', pError);
+          // Don't throw immediately, let the loop retry
+        }
       }
 
       if (!pData) {
-        console.warn('No profile found for ID:', userId);
-        setProfile(null); // Explicitly set to null if missing
-        setSyncingIdentity(false);
+        console.warn('No valid workspace identity found for user after retries.');
+        setProfile(null);
         setLoading(false);
+        setSyncingIdentity(false);
         return;
       }
 
@@ -248,29 +285,6 @@ const App: React.FC = () => {
     }
   }, [addToast]);
 
-  const handleSignOut = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) console.error('Signout error:', error);
-    } catch (e) {
-      console.error('Signout exception:', e);
-    } finally {
-      setSession(null);
-      setProfile(null);
-      setCurrentTenant(null);
-      setAutomationConfig(null);
-      setVehicles([]);
-      setRecords([]);
-      setSyncingIdentity(false);
-      setLoading(false);
-      lastFetchedUserId.current = null;
-      setIsSignOutModalOpen(false);
-      setIsMobileMenuOpen(false);
-      setActiveView('dashboard');
-    }
-  }, []);
-
   useEffect(() => {
     let mounted = true;
     const initializeAuth = async () => {
@@ -298,15 +312,19 @@ const App: React.FC = () => {
           setCurrentTenant(null);
           setAutomationConfig(null);
           setLoading(false);
+          lastFetchedUserId.current = null;
+        }
+        if (event === 'SIGNED_IN' && currentSession?.user?.id) {
+          fetchTenantData(currentSession.user.id, true);
         }
       });
       return () => { mounted = false; subscription.unsubscribe(); };
     }
-  }, []);
+  }, [fetchTenantData]);
 
   useEffect(() => { 
-    if (session?.user?.id) fetchTenantData(session.user.id); 
-  }, [session?.user?.id, fetchTenantData]);
+    if (session?.user?.id && !profile) fetchTenantData(session.user.id); 
+  }, [session?.user?.id, profile, fetchTenantData]);
 
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add('dark');
@@ -316,7 +334,8 @@ const App: React.FC = () => {
   const updateVehicle = async (v: Vehicle) => {
     const tid = profile?.tenant_id;
     if (!tid) {
-      addToast('Security Error', 'Workspace identity missing or invalid context.', 'error');
+      addToast('Security Error', 'Workspace identity missing. Retrying sync...', 'error');
+      if (session?.user?.id) fetchTenantData(session.user.id, true);
       return;
     }
 
@@ -342,7 +361,8 @@ const App: React.FC = () => {
   const addVehicle = async (v: Vehicle) => {
     const tid = profile?.tenant_id;
     if (!tid) {
-      addToast('Security Error', 'Workspace identity missing. Please re-login.', 'error');
+      addToast('Security Error', 'Workspace identity missing. Retrying sync...', 'error');
+      if (session?.user?.id) fetchTenantData(session.user.id, true);
       return;
     }
 
@@ -380,7 +400,6 @@ const App: React.FC = () => {
         expiry_date: r.expiryDate || null,
         last_renewed_date: r.lastRenewedDate || null,
         document_name: r.documentName,
-        // Fix: Use camelCase property names from the ComplianceRecord interface
         document_url: r.documentUrl,
         alert_enabled: r.alertEnabled !== false,
         alert_days_before: r.alertDaysBefore || 15,
@@ -467,14 +486,35 @@ const App: React.FC = () => {
     );
   }
 
-  // If session is active but profile is missing, we must wait or show a relevant error.
+  // Identity verification gating
   if (!session && !loading) return <Auth onAuthComplete={() => {}} />;
 
-  if (loading || (session && !profile)) return (
+  // Better handling for stuck profiles
+  const isSyncStuck = session && !loading && (!profile || (profile.role !== UserRole.SUPER_ADMIN && !profile.tenant_id));
+
+  if (loading || isSyncStuck) return (
     <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-slate-950 p-6 text-center">
       <div className="spinner mb-6" />
       <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">Syncing Workspace</h2>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Establishing Secure Connection</p>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Establishing Secure Identity Link</p>
+      
+      <div className="mt-12 flex flex-col items-center gap-4">
+        <button 
+          onClick={() => session?.user?.id && fetchTenantData(session.user.id, true)}
+          className="text-primary-600 font-bold text-xs uppercase tracking-widest hover:underline"
+        >
+          Force Manual Sync
+        </button>
+        {isSyncStuck && (
+          <button 
+            onClick={handleSignOut}
+            className="text-red-500 font-bold text-xs uppercase tracking-widest hover:underline flex items-center gap-2"
+          >
+            <ICONS.Plus className="w-3 h-3 rotate-45" />
+            Emergency Sign Out
+          </button>
+        )}
+      </div>
     </div>
   );
 
