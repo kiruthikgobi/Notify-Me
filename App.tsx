@@ -4,7 +4,7 @@ import {
   Vehicle, 
   ComplianceRecord, 
   ComplianceType, 
-  ToastMessage,
+  ToastMessage, 
   GlobalAutomationConfig,
   UserRole,
   Tenant,
@@ -100,11 +100,25 @@ const App: React.FC = () => {
     
     try {
       console.log(`Syncing profile for: ${userId}`);
-      const { data: pData, error: pError } = await supabase
+      // Initial fetch
+      let { data: pData, error: pError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+
+      // If no profile found immediately, retry once after a short delay 
+      // (in case the trigger is still processing)
+      if (!pData && !pError) {
+        await new Promise(r => setTimeout(r, 1000));
+        const retry = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        pData = retry.data;
+        pError = retry.error;
+      }
 
       if (pError) {
         console.error('Profile fetch failed:', pError);
@@ -113,6 +127,7 @@ const App: React.FC = () => {
 
       if (!pData) {
         console.warn('No profile found for ID:', userId);
+        setProfile(null); // Explicitly set to null if missing
         setSyncingIdentity(false);
         setLoading(false);
         return;
@@ -231,7 +246,7 @@ const App: React.FC = () => {
       setAutomationLoading(false);
       setLoading(false);
     }
-  }, [session, addToast, profile]);
+  }, [addToast]);
 
   const handleSignOut = useCallback(async () => {
     setLoading(true);
@@ -300,7 +315,10 @@ const App: React.FC = () => {
 
   const updateVehicle = async (v: Vehicle) => {
     const tid = profile?.tenant_id;
-    if (!tid) return;
+    if (!tid) {
+      addToast('Security Error', 'Workspace identity missing or invalid context.', 'error');
+      return;
+    }
 
     try {
       const { error } = await supabase.from('vehicles').update({
@@ -324,7 +342,7 @@ const App: React.FC = () => {
   const addVehicle = async (v: Vehicle) => {
     const tid = profile?.tenant_id;
     if (!tid) {
-      addToast('Security Error', 'Workspace identity missing.', 'error');
+      addToast('Security Error', 'Workspace identity missing. Please re-login.', 'error');
       return;
     }
 
@@ -362,6 +380,7 @@ const App: React.FC = () => {
         expiry_date: r.expiryDate || null,
         last_renewed_date: r.lastRenewedDate || null,
         document_name: r.documentName,
+        // Fix: Use camelCase property names from the ComplianceRecord interface
         document_url: r.documentUrl,
         alert_enabled: r.alertEnabled !== false,
         alert_days_before: r.alertDaysBefore || 15,
@@ -448,9 +467,10 @@ const App: React.FC = () => {
     );
   }
 
+  // If session is active but profile is missing, we must wait or show a relevant error.
   if (!session && !loading) return <Auth onAuthComplete={() => {}} />;
 
-  if (loading || (session && syncingIdentity && !profile)) return (
+  if (loading || (session && !profile)) return (
     <div className="h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-slate-950 p-6 text-center">
       <div className="spinner mb-6" />
       <h2 className="text-2xl font-display font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tight">Syncing Workspace</h2>
