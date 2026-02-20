@@ -1,45 +1,46 @@
 
 -- ========================================================
--- NOTIFY ME: MASTER DATABASE SCHEMA (V3 ROBUST)
+-- NOTIFY ME: BULLETPROOF PRODUCTION SCHEMA (V40)
 -- ========================================================
 
--- 1. Tables Setup
-CREATE TABLE IF NOT EXISTS tenants (
+-- 0. EXTENSIONS
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. BASE TABLES
+CREATE TABLE IF NOT EXISTS public.companies (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  plan TEXT DEFAULT 'FREE',
-  status TEXT DEFAULT 'ACTIVE',
-  subscription_expiry TIMESTAMP WITH TIME ZONE,
-  last_payment_id TEXT,
+  company_name TEXT NOT NULL,
+  subscription_plan TEXT DEFAULT 'FREE' CHECK (subscription_plan IN ('FREE', 'PRO')),
+  status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+  company_id UUID REFERENCES public.companies(id) ON DELETE SET NULL,
   email TEXT,
   full_name TEXT,
-  role TEXT DEFAULT 'TENANT_ADMIN',
+  role TEXT DEFAULT 'TENANT_ADMIN' CHECK (role IN ('SUPER_ADMIN', 'TENANT_ADMIN', 'TENANT_USER', 'TENANT_VIEWER')),
+  access_level TEXT DEFAULT 'FULL_ACCESS' CHECK (access_level IN ('READ_ONLY', 'FULL_ACCESS')),
+  status TEXT DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS vehicles (
+CREATE TABLE IF NOT EXISTS public.vehicles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-  registration_number TEXT NOT NULL,
+  company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+  vehicle_number TEXT NOT NULL,
   make TEXT,
   model TEXT,
   year INTEGER,
   type TEXT DEFAULT 'Truck',
-  added_date DATE DEFAULT CURRENT_DATE,
-  is_draft BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS compliance_records (
+CREATE TABLE IF NOT EXISTS public.compliance_records (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-  vehicle_id UUID REFERENCES vehicles(id) ON DELETE CASCADE,
+  company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+  vehicle_id UUID REFERENCES public.vehicles(id) ON DELETE CASCADE,
   type TEXT NOT NULL,
   expiry_date DATE,
   last_renewed_date DATE,
@@ -47,126 +48,114 @@ CREATE TABLE IF NOT EXISTS compliance_records (
   document_url TEXT,
   alert_enabled BOOLEAN DEFAULT true,
   alert_days_before INTEGER DEFAULT 15,
-  last_alert_sent_date DATE,
   is_draft BOOLEAN DEFAULT false,
-  sent_reminders INTEGER[] DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS automation_config (
-  tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-  recipients TEXT[] DEFAULT '{}',
-  default_thresholds INTEGER[] DEFAULT '{30, 15, 7, 3, 1}',
-  enabled BOOLEAN DEFAULT true,
-  email_template JSONB DEFAULT '{"subject": "⚠️ Vehicle Document Expiry Reminder", "body": "Standard reminder template content..."}'::jsonb,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+-- 2. SECURITY FUNCTIONS (Qualified and Definer-set)
+CREATE OR REPLACE FUNCTION public.check_user_role(u_id UUID, target_role TEXT)
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = u_id AND role = target_role);
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public, auth;
 
-CREATE TABLE IF NOT EXISTS vehicle_makes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(tenant_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS notification_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-  vehicle_reg TEXT,
-  doc_type TEXT,
-  recipient TEXT,
-  status TEXT DEFAULT 'SENT',
-  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 2. Security Helper Functions
-CREATE OR REPLACE FUNCTION get_my_tenant_id() 
+CREATE OR REPLACE FUNCTION public.get_user_company_id(u_id UUID)
 RETURNS UUID AS $$
-  SELECT tenant_id FROM public.profiles WHERE id = auth.uid();
-$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+  SELECT company_id FROM public.profiles WHERE id = u_id;
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public, auth;
 
-CREATE OR REPLACE FUNCTION is_super_admin() 
-RETURNS BOOLEAN AS $$
-  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'SUPER_ADMIN');
-$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+-- 3. RLS POLICIES (Simplified for speed)
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.compliance_records ENABLE ROW LEVEL SECURITY;
 
-CREATE OR REPLACE FUNCTION is_super_admin_configured() 
-RETURNS BOOLEAN AS $$
-  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE role = 'SUPER_ADMIN');
-$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+DROP POLICY IF EXISTS "p_select_own" ON public.profiles;
+CREATE POLICY "p_select_own" ON public.profiles FOR SELECT USING (auth.uid() = id);
 
--- 3. Enable RLS
-ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vehicles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE compliance_records ENABLE ROW LEVEL SECURITY;
-ALTER TABLE automation_config ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vehicle_makes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "v_all_access" ON public.vehicles;
+CREATE POLICY "v_all_access" ON public.vehicles FOR ALL USING (
+  company_id = (SELECT company_id FROM public.profiles WHERE id = auth.uid()) 
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'SUPER_ADMIN')
+);
 
--- 4. Corrected RLS Policies (FIXED SYNTAX ERROR)
--- Profiles
-DROP POLICY IF EXISTS "profiles_select_self" ON profiles;
-DROP POLICY IF EXISTS "profiles_update_self" ON profiles;
-DROP POLICY IF EXISTS "profiles_insert_self" ON profiles;
-DROP POLICY IF EXISTS "profiles_tenant_access" ON profiles;
+DROP POLICY IF EXISTS "r_all_access" ON public.compliance_records;
+CREATE POLICY "r_all_access" ON public.compliance_records FOR ALL USING (
+  company_id = (SELECT company_id FROM public.profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'SUPER_ADMIN')
+);
 
-CREATE POLICY "profiles_select_self" ON profiles FOR SELECT USING (id = auth.uid());
-CREATE POLICY "profiles_update_self" ON profiles FOR UPDATE USING (id = auth.uid());
-CREATE POLICY "profiles_insert_self" ON profiles FOR INSERT WITH CHECK (id = auth.uid());
-CREATE POLICY "profiles_tenant_access" ON profiles FOR SELECT USING (tenant_id = get_my_tenant_id());
-
--- Tenants
-DROP POLICY IF EXISTS "tenants_select" ON tenants;
-DROP POLICY IF EXISTS "tenants_insert" ON tenants;
-CREATE POLICY "tenants_select" ON tenants FOR SELECT USING (id = get_my_tenant_id() OR is_super_admin());
-CREATE POLICY "tenants_insert" ON tenants FOR INSERT WITH CHECK (true);
-
--- Assets
-CREATE POLICY "vehicles_access" ON vehicles FOR ALL USING (tenant_id = get_my_tenant_id() OR is_super_admin());
-CREATE POLICY "records_access" ON compliance_records FOR ALL USING (tenant_id = get_my_tenant_id() OR is_super_admin());
-CREATE POLICY "automation_access" ON automation_config FOR ALL USING (tenant_id = get_my_tenant_id() OR is_super_admin());
-CREATE POLICY "makes_access" ON vehicle_makes FOR ALL USING (tenant_id = get_my_tenant_id() OR is_super_admin());
-CREATE POLICY "logs_access" ON notification_logs FOR ALL USING (tenant_id = get_my_tenant_id() OR is_super_admin());
-
--- 5. Robust Auth Trigger
+-- 4. ATOMIC AUTH TRIGGER (V40)
+-- This function uses nested exception blocks to ensure the user is ALWAYS created.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 DECLARE
-  v_tenant_id UUID;
-  v_role TEXT;
+  v_co_id UUID := NULL;
+  v_raw_role TEXT;
+  v_clean_role TEXT;
+  v_full_name TEXT;
+  v_meta JSONB;
 BEGIN
-  -- Extract metadata
-  BEGIN
-    v_tenant_id := (new.raw_user_metadata->>'tenant_id')::uuid;
-  EXCEPTION WHEN OTHERS THEN
-    v_tenant_id := NULL;
-  END;
+  -- Safe Metadata Capture
+  v_meta := COALESCE(new.raw_user_meta_data, '{}'::jsonb);
   
-  v_role := COALESCE(new.raw_user_metadata->>'role', 'TENANT_ADMIN');
+  -- Role Normalization (Ensure it matches CHECK constraints)
+  v_raw_role := v_meta->>'role';
+  v_clean_role := CASE 
+    WHEN v_raw_role IN ('SUPER_ADMIN', 'TENANT_ADMIN', 'TENANT_USER', 'TENANT_VIEWER') THEN v_raw_role
+    ELSE 'TENANT_ADMIN'
+  END;
 
-  -- Upsert profile record
-  INSERT INTO public.profiles (id, full_name, email, role, tenant_id, updated_at)
-  VALUES (
-    new.id,
-    COALESCE(new.raw_user_metadata->>'full_name', split_part(new.email, '@', 1)),
-    new.email,
-    v_role,
-    v_tenant_id,
-    NOW()
-  )
-  ON CONFLICT (id) DO UPDATE SET
-    full_name = EXCLUDED.full_name,
-    email = EXCLUDED.email,
-    tenant_id = EXCLUDED.tenant_id,
-    updated_at = NOW();
+  v_full_name := COALESCE(v_meta->>'full_name', split_part(new.email, '@', 1));
+
+  -- Step 1: Attempt Company Creation (Isolated)
+  IF v_clean_role = 'TENANT_ADMIN' THEN
+    BEGIN
+      INSERT INTO public.companies (company_name)
+      VALUES (COALESCE(v_meta->>'company_name', 'Default Workspace'))
+      RETURNING id INTO v_co_id;
+    EXCEPTION WHEN OTHERS THEN
+      v_co_id := NULL; -- Proceed even if company creation fails
+    END;
+  END IF;
+
+  -- Step 2: Attempt Company Link for Sub-users (Isolated)
+  IF v_co_id IS NULL AND (v_meta->>'company_id') IS NOT NULL THEN
+    BEGIN
+      v_co_id := (v_meta->>'company_id')::uuid;
+    EXCEPTION WHEN OTHERS THEN
+      v_co_id := NULL;
+    END;
+  END IF;
+
+  -- Step 3: Final Profile Creation (Isolated and Idempotent)
+  BEGIN
+    INSERT INTO public.profiles (id, email, full_name, role, company_id)
+    VALUES (new.id, new.email, v_full_name, v_clean_role, v_co_id)
+    ON CONFLICT (id) DO UPDATE SET
+      email = EXCLUDED.email,
+      full_name = COALESCE(profiles.full_name, EXCLUDED.full_name),
+      role = COALESCE(profiles.role, EXCLUDED.role),
+      company_id = COALESCE(profiles.company_id, EXCLUDED.company_id),
+      updated_at = NOW();
+  EXCEPTION WHEN OTHERS THEN
+    -- Final fallback: Minimal record to prevent Auth service crash
+    INSERT INTO public.profiles (id, email, full_name, role)
+    VALUES (new.id, new.email, split_part(new.email, '@', 1), 'TENANT_ADMIN')
+    ON CONFLICT (id) DO NOTHING;
+  END;
 
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
+-- Re-attach trigger
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Utility for UI
+CREATE OR REPLACE FUNCTION public.is_super_admin_configured() 
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM public.profiles WHERE role = 'SUPER_ADMIN');
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth;

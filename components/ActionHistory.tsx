@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { NotificationLog, UserRole } from '../types';
 import { ICONS } from '../constants';
@@ -58,11 +59,11 @@ const ActionHistory: React.FC<ActionHistoryProps> = ({ logs, userRole }) => {
                     </td>
                     <td className="p-6">
                       <span className="font-display font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                        {log.vehicleReg}
+                        {log.vehicle_reg}
                       </span>
                     </td>
                     <td className="p-6 text-xs font-medium text-slate-600 dark:text-slate-300">
-                      {log.docType}
+                      {log.doc_type}
                     </td>
                     <td className="p-6 text-xs font-medium text-slate-400">
                       {log.recipient}

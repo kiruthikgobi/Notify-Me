@@ -2,8 +2,13 @@
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   TENANT_ADMIN = 'TENANT_ADMIN',
-  TENANT_MANAGER = 'TENANT_MANAGER', // Full Access: Fleet mgmt + Records
-  TENANT_VIEWER = 'TENANT_VIEWER',   // Read Only: View only
+  TENANT_USER = 'TENANT_USER',
+  TENANT_VIEWER = 'TENANT_VIEWER',
+}
+
+export enum AccessLevel {
+  READ_ONLY = 'READ_ONLY',
+  FULL_ACCESS = 'FULL_ACCESS',
 }
 
 export enum SubscriptionPlan {
@@ -16,58 +21,78 @@ export enum TenantStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
-export interface Tenant {
-  id: string;
-  name: string;
-  ownerEmail: string;
-  plan: SubscriptionPlan;
-  status: TenantStatus;
-  createdAt: string;
-  subscriptionExpiry?: string;
-  paymentId?: string;
+export enum ComplianceType {
+  RC = 'Registration Certificate',
+  INSURANCE = 'Insurance',
+  POLLUTION = 'Pollution (PUC)',
+  PERMIT = 'National Permit',
+  FITNESS = 'Fitness Certificate',
 }
 
-export enum ComplianceType {
-  RC = 'RC Validity',
-  PERMIT = 'Permit Validity',
-  INSURANCE = 'Insurance Validity',
-  NP_TAX = 'NP Tax',
-  MV_TAX = 'MV Tax',
-  FITNESS = 'Fitness Certificate',
-  POLLUTION = 'Pollution (PUC)',
+export interface Company {
+  id: string;
+  company_name: string;
+  subscription_plan: SubscriptionPlan;
+  status: TenantStatus;
+  created_at: string;
+  name?: string;
+  plan?: SubscriptionPlan;
+  subscriptionExpiry?: string;
+}
+
+export interface Tenant extends Company {
+  name: string;
+  plan: SubscriptionPlan;
+  subscriptionExpiry?: string;
+}
+
+export interface Profile {
+  id: string;
+  company_id: string | null;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  access_level: AccessLevel | null;
+  status: TenantStatus;
+}
+
+export interface Vehicle {
+  id: string;
+  company_id: string;
+  vehicle_number: string;
+  make: string;
+  model: string;
+  year: number;
+  type: string;
+  rc_expiry_date: string;
+  insurance_expiry_date: string;
+  pollution_expiry_date: string;
+  created_at: string;
+  isDraft?: boolean;
 }
 
 export interface ComplianceRecord {
   id: string;
   vehicleId: string;
   tenantId: string;
-  type: ComplianceType;
+  type: string | ComplianceType;
   expiryDate: string;
-  lastRenewedDate: string;
-  documentName?: string;
-  documentUrl?: string;
+  lastRenewedDate?: string;
   alertEnabled: boolean;
   alertDaysBefore: number;
-  lastAlertSentDate?: string | null;
-  isDraft?: boolean;
-  sentReminders?: number[];
+  isDraft: boolean;
+  documentName?: string;
+  documentUrl?: string;
 }
 
-export interface Vehicle {
-  id: string;
-  tenantId: string;
-  registrationNumber: string;
-  make: string;
-  model: string;
-  year: number;
-  type: 'Truck' | 'Bus' | 'Car' | 'Lorry';
-  addedDate: string;
-  isDraft?: boolean;
+export interface ComplianceAuditInsight {
+  status: 'Critical' | 'Warning' | 'Healthy';
+  summary: string;
+  recommendations: string[];
 }
 
 export interface VehicleMake {
   id: string;
-  tenantId: string;
   name: string;
 }
 
@@ -76,17 +101,20 @@ export interface GlobalAutomationConfig {
   recipients: string[];
   defaultThresholds: number[];
   enabled: boolean;
-  emailTemplate?: {
-    subject: string;
-    body: string;
-  };
+}
+
+export interface AlertRecipient {
+  id: string;
+  company_id: string;
+  email: string;
+  created_at: string;
 }
 
 export interface NotificationLog {
   id: string;
-  tenantId: string;
-  vehicleReg: string;
-  docType: string;
+  company_id: string;
+  vehicle_reg: string;
+  doc_type: string;
   recipient: string;
   status: 'SENT' | 'FAILED';
   timestamp: string;
@@ -97,10 +125,4 @@ export interface ToastMessage {
   title: string;
   message: string;
   type: 'success' | 'warning' | 'error' | 'info';
-}
-
-export interface ComplianceAuditInsight {
-  status: 'Critical' | 'Warning' | 'Healthy';
-  summary: string;
-  recommendations: string[];
 }

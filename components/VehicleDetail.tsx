@@ -32,7 +32,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
   const isReadOnly = userRole === UserRole.TENANT_VIEWER;
 
   // We iterate over all compliance types to ensure the UI always shows placeholders for missing data
-  const allDocTypes = Object.values(ComplianceType);
+  const allDocTypes = Object.values(ComplianceType) as ComplianceType[];
 
   const handleAudit = async () => {
     setIsAuditing(true);
@@ -82,7 +82,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
     setLocalEdit(existing || {
       id: `temp-${docType}`,
       vehicleId: vehicle.id,
-      tenantId: vehicle.tenantId,
+      tenantId: vehicle.company_id,
       type: docType,
       expiryDate: '',
       lastRenewedDate: '',
@@ -159,7 +159,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                   )}
                 </div>
                 <h2 className="text-3xl font-display font-black text-slate-900 dark:text-white mt-3 tracking-tight uppercase">
-                  {vehicle.registrationNumber}
+                  {vehicle.vehicle_number}
                 </h2>
                 <p className="text-slate-500 font-medium flex items-center gap-2 mt-1">
                   {vehicle.make} {vehicle.model} 
@@ -205,7 +205,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{allDocTypes.length} Monitored Aspects</span>
             </div>
             
-            {allDocTypes.map(docType => {
+            {allDocTypes.map((docType: ComplianceType) => {
               const record = records.find(r => r.type === docType);
               const status = getStatusInfo(record?.expiryDate || '', record?.isDraft);
               const isAlertWindow = record?.expiryDate && !record?.isDraft && (() => {
@@ -218,7 +218,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
               const isEditing = editingId === (record ? record.id : `temp-${docType}`);
 
               return (
-                <div key={docType} className={`p-6 hover:bg-slate-50/30 transition-all group ${record?.isDraft ? 'bg-amber-50/10' : ''}`}>
+                <div key={docType as string} className={`p-6 hover:bg-slate-50/30 transition-all group ${record?.isDraft ? 'bg-amber-50/10' : ''}`}>
                   <div className="flex flex-col md:flex-row justify-between gap-6">
                     <div className="flex gap-4">
                       <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-110 ${status.color}`}>
@@ -226,7 +226,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-                            {docType}
+                            {docType as string}
                             {record?.isDraft && <span className="bg-amber-100 text-amber-600 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ml-1">Draft</span>}
                             {isAlertWindow && record?.alertEnabled && (
                               <span className="bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase ml-1 animate-pulse">Alerting Daily</span>
@@ -330,7 +330,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
                <ICONS.Check className="w-5 h-5 text-white/50" />
             </h4>
             <p className="text-sm text-white/80 mb-8 leading-relaxed">Download a secure PDF/CSV summary for regulatory inspections and internal auditing.</p>
-            <button onClick={() => exportToExcel([vehicle], records, `Audit_${vehicle.registrationNumber}`)} className="w-full py-4 bg-white text-primary-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-2">
+            <button onClick={() => exportToExcel([vehicle], records, `Audit_${vehicle.vehicle_number}`)} className="w-full py-4 bg-white text-primary-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center justify-center gap-2">
               <ICONS.Download className="w-4 h-4" />
               Download Audit
             </button>
@@ -346,7 +346,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
               <button onClick={() => setIsEditingVehicle(false)} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><ICONS.Plus className="w-6 h-6 rotate-45 text-slate-400" /></button>
             </div>
             <div className="space-y-6">
-              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Registration Number</label><input className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-black text-xl uppercase tracking-tighter" value={editVehicleData.registrationNumber} onChange={e => setEditVehicleData({...editVehicleData, registrationNumber: e.target.value})} /></div>
+              <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Registration Number</label><input className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-black text-xl uppercase tracking-tighter" value={editVehicleData.vehicle_number} onChange={e => setEditVehicleData({...editVehicleData, vehicle_number: e.target.value})} /></div>
               <div className="grid grid-cols-2 gap-6">
                 <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Manufacturer</label><input list="makes-list-detail" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold" value={editVehicleData.make} onChange={e => setEditVehicleData({...editVehicleData, make: e.target.value})} /><datalist id="makes-list-detail">{vehicleMakes.map(m => <option key={m.id} value={m.name} />)}</datalist></div>
                 <div><label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Year</label><select className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-primary-500 rounded-2xl outline-none font-bold" value={editVehicleData.year} onChange={e => setEditVehicleData({...editVehicleData, year: parseInt(e.target.value)})}>{yearOptions.map(y => <option key={y} value={y}>{y}</option>)}</select></div>
@@ -360,7 +360,7 @@ const VehicleDetail: React.FC<VehicleDetailProps> = ({ vehicle, vehicleMakes, re
         </div>
       )}
 
-      <ConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={() => onDeleteVehicle(vehicle.id)} title="Remove Asset?" message={`Are you sure you want to permanently delete "${vehicle.registrationNumber}"? All records will be lost.`} confirmText="Delete Asset" />
+      <ConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={() => onDeleteVehicle(vehicle.id)} title="Remove Asset?" message={`Are you sure you want to permanently delete "${vehicle.vehicle_number}"? All records will be lost.`} confirmText="Delete Asset" />
     </div>
   );
 };

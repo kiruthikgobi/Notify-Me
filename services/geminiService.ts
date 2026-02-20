@@ -10,8 +10,9 @@ export const getComplianceAudit = async (
   // Use process.env.API_KEY directly as required by standard
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
+  // Use vehicle_number instead of registrationNumber
   const prompt = `Analyze the compliance status of the following vehicle:
-    Vehicle: ${vehicle.registrationNumber} (${vehicle.make} ${vehicle.model}, ${vehicle.year})
+    Vehicle: ${vehicle.vehicle_number} (${vehicle.make} ${vehicle.model}, ${vehicle.year})
     Records: ${JSON.stringify(records)}
     
     Today's Date is ${new Date().toISOString().split('T')[0]}.
@@ -71,10 +72,11 @@ Vehicle Compliance System`;
   const userSubject = template?.subject || defaultSubject;
   const userBody = template?.body || defaultBody;
 
+  // Use vehicle_number instead of registrationNumber
   const prompt = `You are a professional fleet management system. Generate a finalized email using the user's template.
     
     DATA:
-    Vehicle Number: ${vehicle.registrationNumber}
+    Vehicle Number: ${vehicle.vehicle_number}
     Document Type: ${record.type}
     Expiry Date: ${record.expiryDate}
     Remaining Days: ${daysRemaining}
@@ -117,7 +119,7 @@ Vehicle Compliance System`;
     return {
       subject: userSubject.replace('{{Document Type}}', record.type),
       body: userBody
-        .replace('{{Vehicle Number}}', vehicle.registrationNumber)
+        .replace('{{Vehicle Number}}', vehicle.vehicle_number)
         .replace('{{Document Type}}', record.type)
         .replace('{{Expiry Date}}', record.expiryDate)
         .replace('{{Remaining Days}}', daysRemaining.toString())

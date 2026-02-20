@@ -19,7 +19,7 @@ export const exportToExcel = (vehicles: Vehicle[], records: ComplianceRecord[], 
     }
 
     return [
-      vehicle.registrationNumber,
+      vehicle.vehicle_number,
       vehicle.make,
       vehicle.model,
       vehicle.year,
